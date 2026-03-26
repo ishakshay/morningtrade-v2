@@ -67,34 +67,16 @@ def calculate_max_pain(pain_data, strikes):
     return max_pain_s
 
 def get_buildup_signal(price_now, price_prev, oi_now, oi_prev):
-<<<<<<< HEAD
-    """
-    Long Buildup   = Price UP   + OI UP   → bulls adding positions
-    Short Buildup  = Price DOWN + OI UP   → bears adding positions
-    Short Covering = Price UP   + OI DOWN → bears exiting/covering shorts
-    Long Unwinding = Price DOWN + OI DOWN → bulls exiting longs
-    """
-=======
->>>>>>> 3487702
     if price_prev is None or oi_prev is None:
         return None
     if price_now is None or oi_now is None:
         return None
     if price_now == 0 or price_prev == 0:
         return None
-<<<<<<< HEAD
-
-    # Min threshold to filter noise — 0.5% price + 1% OI move
-=======
->>>>>>> 3487702
     price_change_pct = abs(price_now - price_prev) / price_prev * 100
     oi_change_pct    = abs(oi_now - oi_prev) / max(oi_prev, 1) * 100
     if price_change_pct < 0.5 and oi_change_pct < 1.0:
         return None
-<<<<<<< HEAD
-
-=======
->>>>>>> 3487702
     price_up = price_now > price_prev
     oi_up    = oi_now   > oi_prev
     if price_up  and oi_up:        return 'Long Buildup'
@@ -139,13 +121,6 @@ def get_pcr_history(symbol):
     if _pcr_history[symbol]['date'] != today:
         return []
     return _pcr_history[symbol]['snapshots']
-
-def get_iv_history_local(symbol):
-    try:
-        from screeners.nse_market import get_iv_history
-        return get_iv_history(symbol)
-    except:
-        return []
 
 def sentiment_label(pcr):
     if pcr > 1.2: return 'Bullish'
@@ -304,13 +279,8 @@ def parse_option_chain(data, symbol):
             five_pe_coi += pe_chg_oi
             pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi > 0 else 0
             five_strike_rows.append({
-<<<<<<< HEAD
-                'strike':    strike,
-                'is_atm':   strike == atm_strike,
-=======
                 'strike':     strike,
                 'is_atm':    strike == atm_strike,
->>>>>>> 3487702
                 'ce_chg_oi': ce_chg_oi,
                 'pe_chg_oi': pe_chg_oi,
                 'ce_vol':    ce_vol,
@@ -358,25 +328,11 @@ def parse_option_chain(data, symbol):
 
     max_pain_strike = calculate_max_pain(max_pain_data, strikes) if max_pain_data else atm_strike
 
-<<<<<<< HEAD
-    # S1/R1 = closest to spot, S2/R2 = next, S3/R3 = furthest
-    pe_below = sorted(
-        [x for x in all_pe_oi_list if x['strike'] < spot_price],
-        key=lambda x: x['oi'], reverse=True
-    )
-    ce_above = sorted(
-        [x for x in all_ce_oi_list if x['strike'] > spot_price],
-        key=lambda x: x['oi'], reverse=True
-    )
-    top_pe = sorted(pe_below[:6], key=lambda x: abs(x['strike'] - spot_price))
-    top_ce = sorted(ce_above[:6], key=lambda x: abs(x['strike'] - spot_price))
-=======
     # S1/R1 = closest to spot, S2/R2 = next
     pe_below = sorted([x for x in all_pe_oi_list if x['strike'] < spot_price], key=lambda x: x['oi'], reverse=True)
     ce_above = sorted([x for x in all_ce_oi_list if x['strike'] > spot_price], key=lambda x: x['oi'], reverse=True)
     top_pe   = sorted(pe_below[:6], key=lambda x: abs(x['strike'] - spot_price))
     top_ce   = sorted(ce_above[:6], key=lambda x: abs(x['strike'] - spot_price))
->>>>>>> 3487702
 
     support_strike     = top_pe[0]['strike'] if len(top_pe) > 0 else None
     support2_strike    = top_pe[1]['strike'] if len(top_pe) > 1 else None
@@ -449,26 +405,14 @@ def run(symbol='NIFTY'):
         save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
         result['pcr_history'] = get_pcr_history(symbol)
 
-<<<<<<< HEAD
-        # IV snapshot
-=======
         # IV snapshot — separate try so PCR intraday failure doesn't block IV
->>>>>>> 3487702
         try:
             from screeners.nse_market import save_iv_snapshot, get_iv_history
             chain   = result.get('chain', [])
             atm     = result.get('atm_strike')
             atm_row = next((r for r in chain if r['strike'] == atm), None)
-<<<<<<< HEAD
-            if atm_row:
-                ce_iv = atm_row.get('ce_iv', 0)
-                pe_iv = atm_row.get('pe_iv', 0)
-                if ce_iv > 0:
-                    save_iv_snapshot(symbol, ce_iv, pe_iv)
-=======
             if atm_row and atm_row.get('ce_iv', 0) > 0:
                 save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'])
->>>>>>> 3487702
             result['iv_history'] = get_iv_history(symbol)
         except Exception as e:
             print(f"  [nse_options] IV error: {e}")
@@ -491,19 +435,5 @@ def run(symbol='NIFTY'):
             result['pcr_intraday_9m']  = []
             result['pcr_intraday_15m'] = []
 
-<<<<<<< HEAD
-        try:
-            from screeners.nse_market import get_pcr_intraday
-            result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
-            result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
-            result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
-        except Exception as e:
-            result['pcr_intraday_3m']  = []
-            result['pcr_intraday_9m']  = []
-            result['pcr_intraday_15m'] = []
-
-        print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr:{result['pcr_total']} S1:{result['support']} S2:{result['support2']} S3:{result['support3']} R1:{result['resistance']} R2:{result['resistance2']} R3:{result['resistance3']}")
-=======
         print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr:{result['pcr_total']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
->>>>>>> 3487702
     return result
