@@ -400,19 +400,6 @@ def parse_option_chain(data, symbol):
         'market_open':       is_market_open(),
     }
 
-def run(symbol='NIFTY'):
-    if symbol == 'SENSEX':
-        return {
-            'symbol':          'SENSEX',
-            'error':           'SENSEX not available via NSE API.',
-            'spot_price':      0,
-            'chain':           [],
-            'pcr_total':       0,
-            'sentiment_total': 'N/A',
-            'timestamp':       datetime.now().strftime('%H:%M:%S'),
-            'market_open':     is_market_open(),
-        }
-
     raw = fetch_option_chain(symbol)
     if not raw:
         return None
