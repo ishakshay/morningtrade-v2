@@ -178,9 +178,15 @@ def parse_option_chain(data, symbol):
     end_idx        = min(len(strikes), atm_idx + nearby_range + 1)
     nearby_strikes = set(strikes[start_idx:end_idx])
 
+    # ATM ± 2 (5 strikes)
     five_start   = max(0, atm_idx - 2)
     five_end     = min(len(strikes), atm_idx + 3)
     five_strikes = set(strikes[five_start:five_end])
+
+    # ATM ± 1 (3 strikes) — used for intraday PCR
+    three_start   = max(0, atm_idx - 1)
+    three_end     = min(len(strikes), atm_idx + 2)
+    three_strikes = set(strikes[three_start:three_end])
 
     today = date.today().isoformat()
     if symbol not in _prev_prices:
@@ -201,6 +207,8 @@ def parse_option_chain(data, symbol):
     atm_pe_coi       = 0
     five_ce_coi      = 0
     five_pe_coi      = 0
+    three_ce_coi     = 0
+    three_pe_coi     = 0
     five_strike_rows = []
     all_ce_vol       = []
     all_pe_vol       = []
@@ -274,6 +282,10 @@ def parse_option_chain(data, symbol):
             atm_ce_coi = ce_chg_oi
             atm_pe_coi = pe_chg_oi
 
+        if strike in three_strikes:
+            three_ce_coi += ce_chg_oi
+            three_pe_coi += pe_chg_oi
+
         if strike in five_strikes:
             five_ce_coi += ce_chg_oi
             five_pe_coi += pe_chg_oi
@@ -317,9 +329,10 @@ def parse_option_chain(data, symbol):
             'pe_ltp': pe_ltp, 'pe_oi': pe_oi,
         }
 
-    pcr_total   = round(total_pe_oi / total_ce_oi,  2) if total_ce_oi  > 0 else 0
-    pcr_atm     = round(atm_pe_coi  / atm_ce_coi,   2) if atm_ce_coi   > 0 else 0
-    pcr_5strike = round(five_pe_coi / five_ce_coi,  2) if five_ce_coi  > 0 else 0
+    pcr_total   = round(total_pe_oi  / total_ce_oi,  2) if total_ce_oi  > 0 else 0
+    pcr_atm     = round(atm_pe_coi   / atm_ce_coi,   2) if atm_ce_coi   > 0 else 0
+    pcr_5strike = round(five_pe_coi  / five_ce_coi,  2) if five_ce_coi  > 0 else 0
+    pcr_3strike = round(three_pe_coi / three_ce_coi, 2) if three_ce_coi > 0 else 0
 
     top_ce_vol = sorted(all_ce_vol,     key=lambda x: x['volume'], reverse=True)[:5]
     top_pe_vol = sorted(all_pe_vol,     key=lambda x: x['volume'], reverse=True)[:5]
@@ -328,7 +341,7 @@ def parse_option_chain(data, symbol):
 
     max_pain_strike = calculate_max_pain(max_pain_data, strikes) if max_pain_data else atm_strike
 
-    # S1/R1 = closest to spot, S2/R2 = next
+    # S1/R1 = closest to spot, S2/R2 = next, S3/R3 = furthest
     pe_below = sorted([x for x in all_pe_oi_list if x['strike'] < spot_price], key=lambda x: x['oi'], reverse=True)
     ce_above = sorted([x for x in all_ce_oi_list if x['strike'] > spot_price], key=lambda x: x['oi'], reverse=True)
     top_pe   = sorted(pe_below[:6], key=lambda x: abs(x['strike'] - spot_price))
@@ -369,6 +382,10 @@ def parse_option_chain(data, symbol):
         'five_pe_coi':       five_pe_coi,
         'five_strike_rows':  sorted(five_strike_rows, key=lambda x: x['strike'], reverse=True),
         'sentiment_5strike': sentiment_label(pcr_5strike),
+        'pcr_3strike':       pcr_3strike,
+        'three_ce_coi':      three_ce_coi,
+        'three_pe_coi':      three_pe_coi,
+        'sentiment_3strike': sentiment_label(pcr_3strike),
         'top_ce_vol':        top_ce_vol,
         'top_pe_vol':        top_pe_vol,
         'top_ce_oi':         top_ce_oi,
@@ -405,7 +422,7 @@ def run(symbol='NIFTY'):
         save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
         result['pcr_history'] = get_pcr_history(symbol)
 
-        # IV snapshot — separate try so PCR intraday failure doesn't block IV
+        # IV snapshot
         try:
             from screeners.nse_market import save_iv_snapshot, get_iv_history
             chain   = result.get('chain', [])
@@ -418,22 +435,23 @@ def run(symbol='NIFTY'):
             print(f"  [nse_options] IV error: {e}")
             result['iv_history'] = []
 
-        # PCR intraday
+        # PCR intraday — uses ATM ± 1 (3 strikes)
         try:
             from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
             save_pcr_intraday(
                 symbol,
-                result['pcr_atm'],
-                result.get('atm_ce_coi', 0),
-                result.get('atm_pe_coi', 0),
+                result['pcr_3strike'],
+                result.get('three_ce_coi', 0),
+                result.get('three_pe_coi', 0),
             )
             result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
             result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
             result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
         except Exception as e:
+            print(f"  [nse_options] PCR intraday error: {e}")
             result['pcr_intraday_3m']  = []
             result['pcr_intraday_9m']  = []
             result['pcr_intraday_15m'] = []
 
-        print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr:{result['pcr_total']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
+        print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr_total:{result['pcr_total']} pcr_3s:{result['pcr_3strike']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
     return result
