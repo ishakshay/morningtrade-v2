@@ -564,7 +564,7 @@ function PCRIntradayTable(props) {
 
 function IVStatus(props) {
   var history = props.history || [];
-  var symbol  = props.symbol  || 'NIFTY';
+  var [symbol, setSymbol]         = useState('NIFTY');
 
   if (history.length < 2) {
     return (
@@ -1007,7 +1007,7 @@ export default function Options() {
     fetchOverview();
     overviewRef.current = setInterval(fetchOverview, 180000);
     return function() { clearInterval(overviewRef.current); };
-  }, [hasOptions]);
+  }, [symbol, hasOptions]);
 
   useEffect(function() {
     if (!hasOptions) return;

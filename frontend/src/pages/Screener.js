@@ -394,7 +394,7 @@ export default function Screener() {
   var [nr7Filter, setNr7Filter]         = useState('all');
   var [spike5Filter, setSpike5Filter]   = useState('all');
   var [spike10Filter, setSpike10Filter] = useState('all');
-  var { hasAccess }                     = useAuth();
+  useAuth();
 
   useEffect(function() {
     function connect() {
