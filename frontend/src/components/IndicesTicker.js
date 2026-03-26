@@ -1,5 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 
+var REGION_FLAG = {
+  'US': '🇺🇸',
+  'DE': '🇩🇪',
+  'PL': '🇵🇱',
+  'IN': '🇮🇳',
+  'GB': '🇬🇧',
+  'FR': '🇫🇷',
+  'JP': '🇯🇵',
+  'CN': '🇨🇳',
+  'HK': '🇭🇰',
+  'EU': '🇪🇺',
+};
+
 export default function IndicesTicker() {
   var [indices, setIndices] = useState([]);
   var wsRef = useRef(null);
@@ -51,8 +64,10 @@ export default function IndicesTicker() {
         {doubled.map(function(idx, i) {
           var isUp  = idx.percent_change >= 0;
           var color = isUp ? '#4ade80' : '#f87171';
+          var flag  = REGION_FLAG[idx.region] || '🌐';
           return (
-            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 24px', fontSize: 12, fontFamily: 'sans-serif' }}>
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 20px', fontSize: 12, fontFamily: 'sans-serif' }}>
+              <span style={{ fontSize: 14 }}>{flag}</span>
               <span style={{ color: '#94a3b8', fontWeight: 500 }}>{idx.name}</span>
               <span style={{ color: '#f1f5f9', fontWeight: 600 }}>
                 {idx.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
