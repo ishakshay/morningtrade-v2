@@ -42,7 +42,47 @@ def fetch_option_chain(symbol):
         data = nse.equities_option_chain(symbol)
         if not data or 'records' not in data:
             return None
-        return data
+
+        result = parse_option_chain(data, symbol)
+        if result:
+            save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
+            result['pcr_history'] = get_pcr_history(symbol)
+
+            # IV snapshot
+            try:
+                from screeners.nse_market import save_iv_snapshot, get_iv_history
+                chain   = result.get('chain', [])
+                atm     = result.get('atm_strike')
+                atm_row = next((r for r in chain if r['strike'] == atm), None)
+                if atm_row and atm_row.get('ce_iv', 0) > 0:
+                    save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'])
+                result['iv_history'] = get_iv_history(symbol)
+            except Exception as e:
+                print(f"  [nse_options] IV error: {e}")
+                result['iv_history'] = []
+
+            # PCR intraday — uses ATM ± 1 (3 strikes)
+            try:
+                from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
+                save_pcr_intraday(
+                    symbol,
+                    result['pcr_3strike'],
+                    result.get('three_ce_coi', 0),
+                    result.get('three_pe_coi', 0),
+                )
+                result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
+                result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
+                result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
+            except Exception as e:
+                print(f"  [nse_options] PCR intraday error: {e}")
+                result['pcr_intraday_3m']  = []
+                result['pcr_intraday_9m']  = []
+                result['pcr_intraday_15m'] = []
+
+            print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr_total:{result['pcr_total']} pcr_3s:{result['pcr_3strike']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
+
+        return result
+
     except Exception as e:
         print(f"  [nse_options] fetch error {symbol}: {e}")
         global _nse
@@ -399,46 +439,3 @@ def parse_option_chain(data, symbol):
         'timestamp':         datetime.now().strftime('%H:%M:%S'),
         'market_open':       is_market_open(),
     }
-
-    raw = fetch_option_chain(symbol)
-    if not raw:
-        return None
-
-    result = parse_option_chain(raw, symbol)
-    if result:
-        save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
-        result['pcr_history'] = get_pcr_history(symbol)
-
-        # IV snapshot
-        try:
-            from screeners.nse_market import save_iv_snapshot, get_iv_history
-            chain   = result.get('chain', [])
-            atm     = result.get('atm_strike')
-            atm_row = next((r for r in chain if r['strike'] == atm), None)
-            if atm_row and atm_row.get('ce_iv', 0) > 0:
-                save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'])
-            result['iv_history'] = get_iv_history(symbol)
-        except Exception as e:
-            print(f"  [nse_options] IV error: {e}")
-            result['iv_history'] = []
-
-        # PCR intraday — uses ATM ± 1 (3 strikes)
-        try:
-            from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
-            save_pcr_intraday(
-                symbol,
-                result['pcr_3strike'],
-                result.get('three_ce_coi', 0),
-                result.get('three_pe_coi', 0),
-            )
-            result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
-            result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
-            result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
-        except Exception as e:
-            print(f"  [nse_options] PCR intraday error: {e}")
-            result['pcr_intraday_3m']  = []
-            result['pcr_intraday_9m']  = []
-            result['pcr_intraday_15m'] = []
-
-        print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr_total:{result['pcr_total']} pcr_3s:{result['pcr_3strike']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
-    return result

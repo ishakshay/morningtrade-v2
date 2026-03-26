@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 from flask_sock import Sock
@@ -10,17 +13,53 @@ import cache
 from screeners import intraday_booster, nr7, top_movers, momentum_spike, indices, sector_scope
 from screeners.base import SYMBOLS, COUNTRY_LABELS
 from screeners.market_session import run as get_all_sessions
-from screeners.nse_options import run as fetch_options, get_pcr_history
+from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_history
 from screeners.nse_market import get_market_overview
+from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
+
+_news_items_cache = {'data': [], 'ts': 0}
+NEWS_CACHE_TTL    = 300  # 5 minutes
+
+def refresh_news():
+    while True:
+        try:
+            print("\n--- Refreshing news ---")
+            items    = fetch_all_feeds()
+            nse_ann  = get_nse_announcements()
+            all_news = (nse_ann + items)[:50]
+            global _news_items_cache
+            _news_items_cache = {'data': all_news, 'ts': time.time()}
+            print(f"  [news] {len(all_news)} items fetched")
+        except Exception as e:
+            print(f"  [news] refresh error: {e}")
+        time.sleep(300)
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
+
+@app.route('/api/news')
+def get_news():
+    region = request.args.get('region', 'ALL')
+
+    if time.time() - _news_items_cache['ts'] < NEWS_CACHE_TTL and _news_items_cache['data']:
+        all_news = list(_news_items_cache['data'])
+    else:
+        items    = fetch_all_feeds()
+        nse      = get_nse_announcements()
+        all_news = (nse + items)[:80]
+
+    if region != 'ALL':
+        all_news = [n for n in all_news if n.get('region') == region]
+
+    return jsonify(sanitize(all_news))
+
+
 sock = Sock(app)
 
-SCREENERS       = [intraday_booster, nr7, top_movers, momentum_spike, sector_scope]
-COUNTRIES       = list(SYMBOLS.keys())
-_options_cache  = {}
-_market_cache   = {}
+SCREENERS      = [intraday_booster, nr7, top_movers, momentum_spike, sector_scope]
+COUNTRIES      = list(SYMBOLS.keys())
+_options_cache = {}
+_market_cache  = {}
 
 def sanitize(obj):
     if isinstance(obj, float):
@@ -48,7 +87,7 @@ def refresh_market_overview():
         time.sleep(180)
 
 def refresh_options():
-    symbols = ['NIFTY', 'BANKNIFTY', 'SENSEX']
+    symbols = ['NIFTY', 'BANKNIFTY']
     while True:
         print("\n--- Refreshing options ---")
         for symbol in symbols:
@@ -168,7 +207,7 @@ def get_market_overview_route():
 @app.route('/api/options')
 def get_options():
     symbol = request.args.get('symbol', 'NIFTY').upper()
-    if symbol not in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
         return jsonify({'error': 'Invalid symbol'}), 400
     data = _options_cache.get(symbol)
     if not data:
@@ -229,4 +268,6 @@ if __name__ == '__main__':
     t4.start()
     t5 = threading.Thread(target=refresh_market_overview, daemon=True)
     t5.start()
+    t_news = threading.Thread(target=refresh_news, daemon=True)
+    t_news.start()
     app.run(port=3001, debug=False)

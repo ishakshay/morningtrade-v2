@@ -35,7 +35,7 @@ function StockCard({ stock }) {
     return (
       <div style={styles.card}>
         <h3 style={styles.symbol}>{info.ticker}</h3>
-        <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>Unavailable</p>
+        <p style={{ fontSize: 11, color: '#475569', margin: 0 }}>Unavailable</p>
       </div>
     );
   }
@@ -50,7 +50,7 @@ function StockCard({ stock }) {
       <p style={styles.price}>
         {stock.price.toFixed(2)} <span style={styles.currency}>{curr}</span>
       </p>
-      <p style={{ color: isUp ? '#16a34a' : '#dc2626', fontWeight: 600, margin: '4px 0 0', fontSize: 13 }}>
+      <p style={{ color: isUp ? '#4ade80' : '#f87171', fontWeight: 600, margin: '4px 0 0', fontSize: 13 }}>
         {isUp ? '+' : ''}{stock.percent_change.toFixed(2)}%
       </p>
     </div>
@@ -106,7 +106,7 @@ export default function Stocks() {
   var selectedCountry = COUNTRIES.find(function(c) { return c.code === country; });
 
   return (
-    <div>
+    <div style={{ color: '#f1f5f9' }}>
       <PageTitle title="All Tickers" />
 
       <div style={styles.header}>
@@ -120,11 +120,11 @@ export default function Stocks() {
             <span style={styles.statLabel}>Total</span>
           </div>
           <div style={styles.stat}>
-            <span style={{ fontSize: 22, fontWeight: 700, color: '#16a34a' }}>{gainers}</span>
+            <span style={{ fontSize: 22, fontWeight: 700, color: '#4ade80' }}>{gainers}</span>
             <span style={styles.statLabel}>Up</span>
           </div>
           <div style={styles.stat}>
-            <span style={{ fontSize: 22, fontWeight: 700, color: '#dc2626' }}>{losers}</span>
+            <span style={{ fontSize: 22, fontWeight: 700, color: '#f87171' }}>{losers}</span>
             <span style={styles.statLabel}>Down</span>
           </div>
         </div>
@@ -140,14 +140,14 @@ export default function Stocks() {
                 key={c.code}
                 onClick={function() { setCountry(c.code); setFilter('all'); setSearch(''); }}
                 style={{
-                  border: '1px solid #e5e7eb',
+                  border:       '1px solid #334155',
                   borderRadius: 6,
-                  padding: '6px 16px',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  background: country === c.code ? '#111827' : '#fff',
-                  color:      country === c.code ? '#fff'    : '#374151',
+                  padding:      '6px 16px',
+                  cursor:       'pointer',
+                  fontSize:     13,
+                  fontWeight:   600,
+                  background:   country === c.code ? '#f1f5f9' : '#1e293b',
+                  color:        country === c.code ? '#0f172a' : '#94a3b8',
                 }}
               >
                 {c.label}
@@ -169,14 +169,14 @@ export default function Stocks() {
                 key={f}
                 onClick={function() { setFilter(f); }}
                 style={{
-                  border: '1px solid #e5e7eb',
+                  border:       '1px solid #334155',
                   borderRadius: 6,
-                  padding: '6px 14px',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  background: filter === f ? '#1d4ed8' : '#fff',
-                  color:      filter === f ? '#fff'    : '#374151',
+                  padding:      '6px 14px',
+                  cursor:       'pointer',
+                  fontSize:     13,
+                  fontWeight:   500,
+                  background:   filter === f ? '#1d4ed8' : '#1e293b',
+                  color:        filter === f ? '#fff'    : '#94a3b8',
                 }}
               >
                 {f === 'all' ? 'All' : f === 'up' ? 'Gainers' : 'Losers'}
@@ -187,20 +187,20 @@ export default function Stocks() {
       </div>
 
       <div style={styles.statusBar}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', flexShrink: 0, background: lastUpdated ? '#16a34a' : '#f59e0b' }} />
-        <span style={{ fontSize: 13, color: '#6b7280' }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', flexShrink: 0, background: lastUpdated ? '#4ade80' : '#f59e0b' }} />
+        <span style={{ fontSize: 13, color: '#64748b' }}>
           {lastUpdated ? 'Updated ' + lastUpdated + ' · refreshes every 5 min' : 'Loading...'}
         </span>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '40px 0', color: '#6b7280' }}>
+        <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b' }}>
           <p>Fetching {selectedCountry ? selectedCountry.label : ''} stocks...</p>
-          <p style={{ fontSize: 13, color: '#9ca3af' }}>Takes about 2 minutes on first load.</p>
+          <p style={{ fontSize: 13, color: '#475569' }}>Takes about 2 minutes on first load.</p>
         </div>
       ) : (
         <div>
-          <p style={{ color: '#6b7280', fontSize: 13, margin: '0 0 16px' }}>
+          <p style={{ color: '#64748b', fontSize: 13, margin: '0 0 16px' }}>
             Showing {filtered.length} of {stocks.length} stocks · click any card to open chart
           </p>
           <div style={styles.grid}>
@@ -218,19 +218,19 @@ export default function Stocks() {
 
 const styles = {
   header:    { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 12 },
-  title:     { fontSize: 24, fontWeight: 700, margin: '0 0 4px' },
-  subtitle:  { color: '#6b7280', margin: 0, fontSize: 14 },
+  title:     { fontSize: 24, fontWeight: 700, margin: '0 0 4px', color: '#f1f5f9' },
+  subtitle:  { color: '#64748b', margin: 0, fontSize: 14 },
   stats:     { display: 'flex', gap: 16 },
   stat:      { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  statNum:   { fontSize: 22, fontWeight: 700, color: '#111827' },
-  statLabel: { fontSize: 11, color: '#9ca3af' },
+  statNum:   { fontSize: 22, fontWeight: 700, color: '#f1f5f9' },
+  statLabel: { fontSize: 11, color: '#475569' },
   toolbar:   { display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' },
-  search:    { padding: '8px 12px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 14, width: 200, outline: 'none' },
-  statusBar: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '8px 12px', background: '#f9fafb', borderRadius: 6, border: '1px solid #e5e7eb' },
+  search:    { padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', fontSize: 14, width: 200, outline: 'none', background: '#1e293b', color: '#f1f5f9' },
+  statusBar: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '8px 12px', background: '#1e293b', borderRadius: 6, border: '1px solid #334155' },
   grid:      { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 },
-  card:      { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 14 },
-  symbol:    { fontSize: 16, fontWeight: 700, margin: '0 0 2px' },
-  name:      { fontSize: 11, color: '#6b7280', margin: '0 0 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  price:     { fontSize: 20, fontWeight: 600, margin: 0 },
-  currency:  { fontSize: 12, color: '#9ca3af', fontWeight: 400 },
+  card:      { background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: 14 },
+  symbol:    { fontSize: 16, fontWeight: 700, margin: '0 0 2px', color: '#f1f5f9' },
+  name:      { fontSize: 11, color: '#475569', margin: '0 0 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  price:     { fontSize: 20, fontWeight: 600, margin: 0, color: '#f1f5f9' },
+  currency:  { fontSize: 12, color: '#475569', fontWeight: 400 },
 };

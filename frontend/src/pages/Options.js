@@ -6,7 +6,6 @@ import { useNavigate } from 'react-router-dom';
 var SYMBOLS = [
   { code: 'NIFTY',     label: 'NIFTY 50',  flag: '📊' },
   { code: 'BANKNIFTY', label: 'BANKNIFTY', flag: '🏦' },
-  { code: 'SENSEX',    label: 'SENSEX',    flag: '📈' },
 ];
 
 function sentimentColor(s) {

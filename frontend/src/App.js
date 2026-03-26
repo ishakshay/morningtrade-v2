@@ -12,6 +12,8 @@ import OptionChain from './pages/OptionChain';
 import Login from './pages/Login';
 import AuthSuccess from './pages/AuthSuccess';
 import IndicesTicker from './components/IndicesTicker';
+import News from './pages/News';
+
 
 function FooterDisclaimer() {
   return (
@@ -66,6 +68,7 @@ function Sidebar({ collapsed, setCollapsed }) {
         { to: '/screener',       label: 'Screener'        },
         { to: '/sector-scope',   label: 'Sector Scope'    },
         { to: '/market-session', label: 'Market Sessions' },
+        { to: '/news', label: 'Market News' },
       ],
     },
     {
@@ -254,6 +257,7 @@ function AppLayout() {
               <Route path="/pricing"        element={<Pricing />}      />
               <Route path="/options"        element={<Options />}      />
               <Route path="/option-chain"   element={<OptionChain />}  />
+              <Route path="/news" element={<News />} />
             </Routes>
           </div>
           <FooterDisclaimer />
