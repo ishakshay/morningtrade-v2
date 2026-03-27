@@ -2,10 +2,11 @@ from jugaad_data.nse import NSELive
 from datetime import datetime, date
 import math
 
-SCREENER_ID   = 'nse_options'
-_nse          = None
-_pcr_history  = {}
-_prev_prices  = {}
+SCREENER_ID       = 'nse_options'
+_nse              = None
+_pcr_history      = {}
+_prev_prices      = {}
+_strike_pcr_hist  = {}   # NEW: per-strike COI PCR history
 
 def get_nse():
     global _nse
@@ -35,6 +36,35 @@ def safe_int(val, default=0):
     except:
         return default
 
+def save_strike_pcr_snapshot(symbol, five_strike_rows):
+    """Store per-strike COI PCR, keeping last 6 readings."""
+    global _strike_pcr_hist
+    today   = date.today().isoformat()
+    now_str = datetime.now().strftime('%H:%M')
+
+    if symbol not in _strike_pcr_hist:
+        _strike_pcr_hist[symbol] = {'date': today, 'snapshots': []}
+    if _strike_pcr_hist[symbol]['date'] != today:
+        _strike_pcr_hist[symbol] = {'date': today, 'snapshots': []}
+
+    snapshot = {'time': now_str, 'strikes': {}}
+    for row in five_strike_rows:
+        strike = row.get('strike')
+        if strike:
+            snapshot['strikes'][strike] = round(row.get('pcr_coi') or 0, 2)
+
+    _strike_pcr_hist[symbol]['snapshots'].append(snapshot)
+    if len(_strike_pcr_hist[symbol]['snapshots']) > 6:
+        _strike_pcr_hist[symbol]['snapshots'] = _strike_pcr_hist[symbol]['snapshots'][-6:]
+
+def get_strike_pcr_history(symbol):
+    today = date.today().isoformat()
+    if symbol not in _strike_pcr_hist:
+        return []
+    if _strike_pcr_hist[symbol]['date'] != today:
+        return []
+    return _strike_pcr_hist[symbol]['snapshots']
+
 def fetch_option_chain(symbol):
     nse = get_nse()
     try:
@@ -47,6 +77,10 @@ def fetch_option_chain(symbol):
         if result:
             save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
             result['pcr_history'] = get_pcr_history(symbol)
+
+            # Save per-strike PCR history
+            save_strike_pcr_snapshot(symbol, result.get('five_strike_rows', []))
+            result['strike_pcr_history'] = get_strike_pcr_history(symbol)
 
             # IV snapshot
             try:
@@ -61,7 +95,7 @@ def fetch_option_chain(symbol):
                 print(f"  [nse_options] IV error: {e}")
                 result['iv_history'] = []
 
-            # PCR intraday — uses ATM ± 1 (3 strikes)
+            # PCR intraday
             try:
                 from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
                 save_pcr_intraday(
@@ -218,12 +252,10 @@ def parse_option_chain(data, symbol):
     end_idx        = min(len(strikes), atm_idx + nearby_range + 1)
     nearby_strikes = set(strikes[start_idx:end_idx])
 
-    # ATM ± 2 (5 strikes)
     five_start   = max(0, atm_idx - 2)
     five_end     = min(len(strikes), atm_idx + 3)
     five_strikes = set(strikes[five_start:five_end])
 
-    # ATM ± 1 (3 strikes) — used for intraday PCR
     three_start   = max(0, atm_idx - 1)
     three_end     = min(len(strikes), atm_idx + 2)
     three_strikes = set(strikes[three_start:three_end])
@@ -381,7 +413,6 @@ def parse_option_chain(data, symbol):
 
     max_pain_strike = calculate_max_pain(max_pain_data, strikes) if max_pain_data else atm_strike
 
-    # S1/R1 = closest to spot, S2/R2 = next, S3/R3 = furthest
     pe_below = sorted([x for x in all_pe_oi_list if x['strike'] < spot_price], key=lambda x: x['oi'], reverse=True)
     ce_above = sorted([x for x in all_ce_oi_list if x['strike'] > spot_price], key=lambda x: x['oi'], reverse=True)
     top_pe   = sorted(pe_below[:6], key=lambda x: abs(x['strike'] - spot_price))

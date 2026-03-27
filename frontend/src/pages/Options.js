@@ -362,10 +362,10 @@ function OIActivityTable(props) {
   var peOI = props.peOI || [];
   var [tab, setTab] = useState('calls');
 
-  var rows    = tab === 'calls' ? ceOI : peOI;
-  var color   = tab === 'calls' ? '#f87171' : '#4ade80';
-  var barCol  = tab === 'calls' ? '#dc2626'  : '#16a34a';
-  var maxOI   = Math.max.apply(null, rows.map(function(r) { return r.oi; }).concat([1]));
+  var rows   = tab === 'calls' ? ceOI : peOI;
+  var color  = tab === 'calls' ? '#f87171' : '#4ade80';
+  var barCol = tab === 'calls' ? '#dc2626'  : '#16a34a';
+  var maxOI  = Math.max.apply(null, rows.map(function(r) { return r.oi; }).concat([1]));
 
   function fmt(n) {
     if (!n && n !== 0) return '—';
@@ -382,10 +382,10 @@ function OIActivityTable(props) {
   function buildupBadge(sig) {
     if (!sig) return null;
     var cols = {
-      'Long Buildup':   { bg: 'rgba(74,222,128,0.15)',  color: '#4ade80'  },
-      'Short Buildup':  { bg: 'rgba(248,113,113,0.15)', color: '#f87171'  },
-      'Short Covering': { bg: 'rgba(96,165,250,0.15)',  color: '#60a5fa'  },
-      'Long Unwinding': { bg: 'rgba(245,158,11,0.15)',  color: '#f59e0b'  },
+      'Long Buildup':   { bg: 'rgba(74,222,128,0.15)',  color: '#4ade80' },
+      'Short Buildup':  { bg: 'rgba(248,113,113,0.15)', color: '#f87171' },
+      'Short Covering': { bg: 'rgba(96,165,250,0.15)',  color: '#60a5fa' },
+      'Long Unwinding': { bg: 'rgba(245,158,11,0.15)',  color: '#f59e0b' },
     };
     var style = cols[sig] || { bg: 'rgba(100,116,139,0.15)', color: '#64748b' };
     return (
@@ -437,7 +437,7 @@ function OIActivityTable(props) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(function(row, i) {
+          {rows.map(function(row) {
             var barPct = (row.oi / maxOI) * 100;
             return (
               <tr key={row.strike} style={{ borderBottom: '1px solid #1e293b22' }}>
@@ -484,8 +484,8 @@ function PCRIntradayTable(props) {
   }
 
   function signalStyle(sig) {
-    if (sig === 'BUY')     return { color: '#4ade80', fontWeight: 700 };
-    if (sig === 'SELL')    return { color: '#f87171', fontWeight: 700 };
+    if (sig === 'BUY')  return { color: '#4ade80', fontWeight: 700 };
+    if (sig === 'SELL') return { color: '#f87171', fontWeight: 700 };
     return { color: '#f59e0b', fontWeight: 700 };
   }
 
@@ -508,14 +508,14 @@ function PCRIntradayTable(props) {
                 key={t}
                 onClick={function() { setTab(t); }}
                 style={{
-                  border:     '1px solid #334155',
+                  border:       '1px solid #334155',
                   borderRadius: 6,
-                  padding:    '3px 10px',
-                  cursor:     'pointer',
-                  fontSize:   11,
-                  fontWeight: 600,
-                  background: tab === t ? '#3b82f6' : 'transparent',
-                  color:      tab === t ? '#fff'    : '#64748b',
+                  padding:      '3px 10px',
+                  cursor:       'pointer',
+                  fontSize:     11,
+                  fontWeight:   600,
+                  background:   tab === t ? '#3b82f6' : 'transparent',
+                  color:        tab === t ? '#fff'    : '#64748b',
                 }}
               >
                 {t}
@@ -564,7 +564,7 @@ function PCRIntradayTable(props) {
 
 function IVStatus(props) {
   var history = props.history || [];
-  var [symbol, setSymbol]         = useState('NIFTY');
+  var symbol  = props.symbol  || 'NIFTY';
 
   if (history.length < 2) {
     return (
@@ -700,8 +700,8 @@ function IVChart(props) {
   var minVal  = Math.min.apply(null, allVals);
   var range   = maxVal - minVal || 1;
   var w = 600, h = 100, padL = 36, padR = 10, padT = 10, padB = 22;
-  var chartW = w - padL - padR;
-  var chartH = h - padT - padB;
+  var chartW  = w - padL - padR;
+  var chartH  = h - padT - padB;
   function makePoints(vals) {
     return vals.map(function(v, i) {
       var x = padL + (i / (vals.length - 1)) * chartW;
@@ -766,8 +766,8 @@ function ConstituentTable(props) {
           </thead>
           <tbody>
             {stocks.map(function(s) {
-              var isUp    = s.is_up;
-              var pctCol  = isUp ? '#4ade80' : '#f87171';
+              var isUp     = s.is_up;
+              var pctCol   = isUp ? '#4ade80' : '#f87171';
               var barColor = isUp ? '#16a34a' : '#dc2626';
               return (
                 <tr key={s.symbol} style={{ borderBottom: '1px solid #1e293b22' }}>
@@ -800,6 +800,8 @@ function FiveStrikeTable(props) {
   var sentiment = props.sentiment || 'Neutral';
   var ceCOI     = props.ceCOI     || 0;
   var peCOI     = props.peCOI     || 0;
+  var history       = props.history       || [];
+  var strikeHistory = props.strikeHistory || [];
   var color     = sentimentColor(sentiment);
 
   function fmt(n) {
@@ -816,15 +818,26 @@ function FiveStrikeTable(props) {
     return v > 0 ? '#4ade80' : '#f87171';
   }
 
+  function pcrColor(v) {
+    if (v > 1.2) return '#4ade80';
+    if (v < 0.8) return '#f87171';
+    return '#f59e0b';
+  }
+
   var totalCE = ceCOI || rows.reduce(function(s, r) { return s + (r.ce_chg_oi || 0); }, 0);
   var totalPE = peCOI || rows.reduce(function(s, r) { return s + (r.pe_chg_oi || 0); }, 0);
   var total   = Math.abs(totalCE) + Math.abs(totalPE) || 1;
   var cePct   = Math.round((Math.abs(totalCE) / total) * 100);
   var pePct   = 100 - cePct;
 
+  // last 6 snapshots for COI PCR trend
+  var last6 = history.slice(-6);
+
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+
+        {/* Title + current PCR */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>ATM ± 2 Strikes — COI PCR</p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -832,6 +845,8 @@ function FiveStrikeTable(props) {
             <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sentimentBg(sentiment), color: color, border: '1px solid ' + color + '44' }}>{sentiment}</span>
           </div>
         </div>
+
+        {/* CE / PE COI boxes */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
           <div style={{ background: 'rgba(248,113,113,0.1)', borderRadius: 8, padding: '8px 12px' }}>
             <p style={{ fontSize: 10, color: '#f87171', margin: '0 0 2px', fontWeight: 700 }}>Total CE COI (5 strikes)</p>
@@ -842,6 +857,8 @@ function FiveStrikeTable(props) {
             <p style={{ fontSize: 15, fontWeight: 700, color: '#4ade80', margin: 0 }}>{fmt(totalPE)}</p>
           </div>
         </div>
+
+        {/* CE/PE bar */}
         <div style={{ position: 'relative', height: 6, borderRadius: 3, overflow: 'hidden', display: 'flex' }}>
           <div style={{ width: cePct + '%', background: '#dc2626', borderRadius: '3px 0 0 3px' }} />
           <div style={{ width: pePct + '%', background: '#16a34a', borderRadius: '0 3px 3px 0' }} />
@@ -850,7 +867,52 @@ function FiveStrikeTable(props) {
           <span>CE {cePct}% writing</span>
           <span>PE {pePct}% writing</span>
         </div>
+
+        {/* Last 6 COI PCR trend */}
+        {last6.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <p style={{ fontSize: 10, fontWeight: 700, color: '#475569', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              COI PCR Trend — Last {last6.length} readings (every 3 min)
+            </p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {last6.map(function(snap, i) {
+                var val     = snap.pcr_5strike || 0;
+                var col     = pcrColor(val);
+                var isLast  = i === last6.length - 1;
+                var prevVal = i > 0 ? (last6[i - 1].pcr_5strike || 0) : null;
+                var arrow   = prevVal === null ? '' : val > prevVal ? ' ↑' : val < prevVal ? ' ↓' : ' →';
+                var arrowCol = prevVal === null ? '#64748b' : val > prevVal ? '#4ade80' : val < prevVal ? '#f87171' : '#64748b';
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display:        'flex',
+                      flexDirection:  'column',
+                      alignItems:     'center',
+                      padding:        '6px 10px',
+                      background:     isLast ? col + '22' : '#1e293b',
+                      border:         '1px solid ' + (isLast ? col + '66' : '#334155'),
+                      borderRadius:   8,
+                      minWidth:       52,
+                    }}
+                  >
+                    <span style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>{snap.time}</span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: col }}>
+                      {val.toFixed(2)}
+                      <span style={{ fontSize: 11, color: arrowCol }}>{arrow}</span>
+                    </span>
+                    <span style={{ fontSize: 9, color: col, fontWeight: 600 }}>
+                      {val > 1.2 ? 'Bull' : val < 0.8 ? 'Bear' : 'Neut'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Strike table */}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ background: '#1e293b' }}>
@@ -859,14 +921,17 @@ function FiveStrikeTable(props) {
             <th style={{ padding: '8px 16px', color: '#f1f5f9', textAlign: 'center', fontWeight: 700 }}>Strike</th>
             <th style={{ padding: '8px 16px', color: '#4ade80', textAlign: 'left',   fontWeight: 600 }}>PE Vol</th>
             <th style={{ padding: '8px 16px', color: '#4ade80', textAlign: 'left',   fontWeight: 600 }}>PE COI</th>
-            <th style={{ padding: '8px 16px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>COI PCR</th>
+            <th style={{ padding: '8px 16px', color: '#94a3b8', textAlign: 'center', fontWeight: 700, borderLeft: '1px solid #334155' }}>Now</th>
+            {strikeHistory.map(function(snap, i) {
+              return <th key={i} style={{ padding: '8px 10px', color: '#475569', textAlign: 'center', fontWeight: 600, fontSize: 10, whiteSpace: 'nowrap' }}>{snap.time}</th>;
+            })}
           </tr>
         </thead>
         <tbody>
           {rows.map(function(row) {
             var isATM  = row.is_atm;
             var rowBg  = isATM ? 'rgba(96,165,250,0.1)' : 'transparent';
-            var pcrCol = row.pcr_coi > 1.2 ? '#4ade80' : row.pcr_coi < 0.8 ? '#f87171' : '#f59e0b';
+            var pcrCol = pcrColor(row.pcr_coi);
             return (
               <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
                 <td style={{ padding: '10px 16px', textAlign: 'right',  color: chgCol(row.ce_chg_oi), fontWeight: 600 }}>{fmt(row.ce_chg_oi)}</td>
@@ -877,7 +942,19 @@ function FiveStrikeTable(props) {
                 </td>
                 <td style={{ padding: '10px 16px', textAlign: 'left',   color: '#94a3b8' }}>{fmt(row.pe_vol)}</td>
                 <td style={{ padding: '10px 16px', textAlign: 'left',   color: chgCol(row.pe_chg_oi), fontWeight: 600 }}>{fmt(row.pe_chg_oi)}</td>
-                <td style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, color: pcrCol }}>{row.pcr_coi || '—'}</td>
+                <td style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, color: pcrCol, borderLeft: '1px solid #334155' }}>{row.pcr_coi || '—'}</td>
+                {strikeHistory.map(function(snap, i) {
+                  var val     = snap.strikes ? snap.strikes[String(row.strike)] : null;
+                  var col     = val != null ? pcrColor(val) : '#334155';
+                  var prevVal = i > 0 && strikeHistory[i-1].strikes ? strikeHistory[i-1].strikes[String(row.strike)] : null;
+                  var arrow   = val != null && prevVal != null ? (val > prevVal ? '↑' : val < prevVal ? '↓' : '') : '';
+                  return (
+                    <td key={i} style={{ padding: '10px 10px', textAlign: 'center', color: col, fontWeight: 500, fontSize: 11 }}>
+                      {val != null ? val.toFixed(2) : '—'}
+                      {arrow && <span style={{ fontSize: 9, marginLeft: 2, color: arrow === '↑' ? '#4ade80' : '#f87171' }}>{arrow}</span>}
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
@@ -1007,7 +1084,7 @@ export default function Options() {
     fetchOverview();
     overviewRef.current = setInterval(fetchOverview, 180000);
     return function() { clearInterval(overviewRef.current); };
-  }, [symbol, hasOptions]);
+  }, [hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(function() {
     if (!hasOptions) return;
@@ -1022,15 +1099,15 @@ export default function Options() {
       fetchSym('BANKNIFTY', setBnData);
     }, 180000);
     return function() { clearInterval(intervalRef.current); };
-  }, [symbol, hasOptions]);
+  }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!hasOptions) {
     return (
       <div style={{ color: '#f1f5f9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 500, gap: 20 }}>
         <PageTitle title="Options Analysis" />
         <div style={{ fontSize: 48 }}>📊</div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Options Analysis</h1>
-        <p style={{ fontSize: 14, color: '#6b7280', margin: 0, textAlign: 'center', maxWidth: 400, lineHeight: 1.6 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>Options Analysis</h1>
+        <p style={{ fontSize: 14, color: '#64748b', margin: 0, textAlign: 'center', maxWidth: 400, lineHeight: 1.6 }}>
           PCR analysis, OI buildup, IV trends and market sentiment. Available on Options Pro.
         </p>
         <button
@@ -1179,6 +1256,17 @@ export default function Options() {
           <IVStatus history={data.iv_history || []} symbol={symbol} />
           <IVChart  history={data.iv_history || []} symbol={symbol} />
 
+          {/* FiveStrikeTable moved here — below IVChart */}
+          <FiveStrikeTable
+            rows={data.five_strike_rows || []}
+            pcr={data.pcr_5strike || 0}
+            sentiment={data.sentiment_5strike || 'Neutral'}
+            ceCOI={data.five_ce_coi}
+            peCOI={data.five_pe_coi}
+            history={data.pcr_history || []}
+            strikeHistory={data.strike_pcr_history || []}
+          />
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <PCRIntradayTable
               data3m={data.pcr_intraday_3m   || []}
@@ -1199,14 +1287,6 @@ export default function Options() {
             peOI={data.top_pe_oi || []}
           />
 
-          <FiveStrikeTable
-            rows={data.five_strike_rows || []}
-            pcr={data.pcr_5strike || 0}
-            sentiment={data.sentiment_5strike || 'Neutral'}
-            ceCOI={data.five_ce_coi}
-            peCOI={data.five_pe_coi}
-          />
-
           <VolumeLeaders
             ceVol={data.top_ce_vol || []}
             peVol={data.top_pe_vol || []}
@@ -1216,7 +1296,8 @@ export default function Options() {
             <ConstituentTable stocks={niftyStocks}     title="NIFTY 50 — Top Weighted"  color="#60a5fa" />
             <ConstituentTable stocks={bankniftyStocks} title="BANKNIFTY — Top Weighted" color="#f59e0b" />
           </div>
-                  </div>
+
+        </div>
       )}
     </div>
   );
