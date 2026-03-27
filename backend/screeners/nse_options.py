@@ -6,7 +6,7 @@ SCREENER_ID       = 'nse_options'
 _nse              = None
 _pcr_history      = {}
 _prev_prices      = {}
-_strike_pcr_hist  = {}   # NEW: per-strike COI PCR history
+_strike_pcr_hist  = {}
 
 def get_nse():
     global _nse
@@ -37,22 +37,18 @@ def safe_int(val, default=0):
         return default
 
 def save_strike_pcr_snapshot(symbol, five_strike_rows):
-    """Store per-strike COI PCR, keeping last 6 readings."""
     global _strike_pcr_hist
     today   = date.today().isoformat()
     now_str = datetime.now().strftime('%H:%M')
-
     if symbol not in _strike_pcr_hist:
         _strike_pcr_hist[symbol] = {'date': today, 'snapshots': []}
     if _strike_pcr_hist[symbol]['date'] != today:
         _strike_pcr_hist[symbol] = {'date': today, 'snapshots': []}
-
     snapshot = {'time': now_str, 'strikes': {}}
     for row in five_strike_rows:
         strike = row.get('strike')
         if strike:
-            snapshot['strikes'][strike] = round(row.get('pcr_coi') or 0, 2)
-
+            snapshot['strikes'][str(strike)] = round(row.get('pcr_coi') or 0, 2)
     _strike_pcr_hist[symbol]['snapshots'].append(snapshot)
     if len(_strike_pcr_hist[symbol]['snapshots']) > 6:
         _strike_pcr_hist[symbol]['snapshots'] = _strike_pcr_hist[symbol]['snapshots'][-6:]
@@ -78,7 +74,7 @@ def fetch_option_chain(symbol):
             save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
             result['pcr_history'] = get_pcr_history(symbol)
 
-            # Save per-strike PCR history
+            # Per-strike PCR history
             save_strike_pcr_snapshot(symbol, result.get('five_strike_rows', []))
             result['strike_pcr_history'] = get_strike_pcr_history(symbol)
 
@@ -112,6 +108,14 @@ def fetch_option_chain(symbol):
                 result['pcr_intraday_3m']  = []
                 result['pcr_intraday_9m']  = []
                 result['pcr_intraday_15m'] = []
+
+            # Top strikes for option buyers (Black-Scholes greeks)
+            try:
+                from screeners.options_greeks import get_top_strikes
+                result['top_strikes'] = get_top_strikes(result, result.get('iv_history', []))
+            except Exception as e:
+                print(f"  [nse_options] greeks error: {e}")
+                result['top_strikes'] = None
 
             print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr_total:{result['pcr_total']} pcr_3s:{result['pcr_3strike']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
 

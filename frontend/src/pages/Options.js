@@ -1031,6 +1031,183 @@ function VolumeLeaders(props) {
   );
 }
 
+// Paste this into Options.js right before:  export default function Options() {
+
+function TopStrikesSection(props) {
+  var data = props.data || {};
+  var ts   = data.top_strikes || {};
+
+  if (!ts.top_calls && !ts.top_puts) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: '20px 24px' }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          🎯 Top Strikes for Option Buyers
+        </p>
+        <p style={{ fontSize: 12, color: '#475569', margin: 0 }}>Collecting data — available after first refresh</p>
+      </div>
+    );
+  }
+
+  var topCalls = ts.top_calls || [];
+  var topPuts  = ts.top_puts  || [];
+
+  function fmtVol(n) {
+    if (!n) return '—';
+    if (n >= 100000) return (n / 100000).toFixed(1) + 'L';
+    if (n >= 1000)   return (n / 1000).toFixed(0) + 'K';
+    return n;
+  }
+
+  function fmtCOI(n) {
+    if (!n && n !== 0) return '—';
+    var sign = n < 0 ? '-' : '+';
+    var abs  = Math.abs(n);
+    if (abs >= 100000) return sign + (abs / 100000).toFixed(1) + 'L';
+    if (abs >= 1000)   return sign + (abs / 1000).toFixed(0) + 'K';
+    return (n > 0 ? '+' : '') + n;
+  }
+
+  function StrikeCard(p) {
+    var item     = p.item;
+    var side     = p.side;
+    var rank     = p.rank;
+    var borderCol = side === 'call' ? '#f87171' : '#4ade80';
+    var sideLabel = side === 'call' ? 'CALL' : 'PUT';
+
+    var maxScore = 60;
+    var scorePct = Math.min((item.score / maxScore) * 100, 100);
+    var scoreCol = item.score >= 35 ? '#4ade80' : item.score >= 20 ? '#f59e0b' : '#f87171';
+
+    return (
+      <div style={{
+        background:   '#0f172a',
+        border:       '1px solid ' + borderCol + '44',
+        borderLeft:   '3px solid ' + borderCol,
+        borderRadius: 10,
+        padding:      '14px 16px',
+        flex:         1,
+        minWidth:     200,
+        maxWidth:     320,
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: '#334155' }}>#{rank}</span>
+            <span style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9' }}>{item.strike}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: borderCol + '22', color: borderCol }}>
+              {sideLabel}
+            </span>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>₹{item.ltp}</p>
+            <p style={{ fontSize: 9, color: '#475569', margin: 0 }}>LTP</p>
+          </div>
+        </div>
+
+        {/* Stats grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
+          <div style={{ background: '#1e293b', borderRadius: 6, padding: '6px 10px' }}>
+            <p style={{ fontSize: 9, color: '#64748b', margin: '0 0 2px', fontWeight: 700 }}>VOLUME</p>
+            <p style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>{fmtVol(item.volume)}</p>
+          </div>
+          <div style={{ background: '#1e293b', borderRadius: 6, padding: '6px 10px' }}>
+            <p style={{ fontSize: 9, color: '#64748b', margin: '0 0 2px', fontWeight: 700 }}>MY COI</p>
+            <p style={{ fontSize: 13, fontWeight: 700, color: (item.chg_oi || 0) >= 0 ? '#4ade80' : '#f87171', margin: 0 }}>
+              {fmtCOI(item.chg_oi)}
+            </p>
+          </div>
+          <div style={{ background: '#1e293b', borderRadius: 6, padding: '6px 10px' }}>
+            <p style={{ fontSize: 9, color: '#64748b', margin: '0 0 2px', fontWeight: 700 }}>
+              {side === 'call' ? 'PE COI (opp)' : 'CE COI (opp)'}
+            </p>
+            <p style={{ fontSize: 13, fontWeight: 700, color: (item.opp_chgoi || 0) >= 0 ? '#4ade80' : '#f87171', margin: 0 }}>
+              {fmtCOI(item.opp_chgoi)}
+            </p>
+          </div>
+          <div style={{ background: '#1e293b', borderRadius: 6, padding: '6px 10px' }}>
+            <p style={{ fontSize: 9, color: '#64748b', margin: '0 0 2px', fontWeight: 700 }}>IV</p>
+            <p style={{ fontSize: 13, fontWeight: 700, color: item.iv > 30 ? '#f87171' : '#f59e0b', margin: 0 }}>
+              {item.iv}%
+              {item.iv_rising && <span style={{ fontSize: 9, color: '#f87171', marginLeft: 4 }}>↑</span>}
+            </p>
+          </div>
+        </div>
+
+        {/* Score bar */}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+            <span style={{ fontSize: 9, color: '#475569' }}>Buyer Score</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: scoreCol }}>{item.score}</span>
+          </div>
+          <div style={{ height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ width: scorePct + '%', height: '100%', background: scoreCol, borderRadius: 2 }} />
+          </div>
+        </div>
+
+        {/* Reasons */}
+        {item.reason && (
+          <p style={{ fontSize: 10, color: '#475569', margin: 0, lineHeight: 1.5 }}>
+            {item.reason}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #8b5cf644', borderRadius: 12, padding: '18px 20px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#a78bfa', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            🎯 Top Strikes for Option Buyers
+          </p>
+          <p style={{ fontSize: 11, color: '#475569', margin: 0 }}>
+            High volume · Low writer activity · Opposite side writing pressure
+            {ts.iv_rising ? ' · IV Rising ↑' : ''}
+          </p>
+        </div>
+        <span style={{ fontSize: 10, color: '#334155' }}>⏱ {ts.timestamp}</span>
+      </div>
+
+      <div style={{ height: 1, background: '#1e293b', margin: '12px 0' }} />
+
+      {/* Calls */}
+      <p style={{ fontSize: 11, fontWeight: 700, color: '#f87171', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        📞 Top Calls to Buy
+      </p>
+      {topCalls.length === 0 ? (
+        <p style={{ fontSize: 12, color: '#475569', margin: '0 0 16px' }}>No calls matching criteria right now</p>
+      ) : (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+          {topCalls.map(function(item, i) {
+            return <StrikeCard key={item.strike + '-call'} item={item} side="call" rank={i + 1} />;
+          })}
+        </div>
+      )}
+
+      {/* Puts */}
+      <p style={{ fontSize: 11, fontWeight: 700, color: '#4ade80', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        📉 Top Puts to Buy
+      </p>
+      {topPuts.length === 0 ? (
+        <p style={{ fontSize: 12, color: '#475569', margin: 0 }}>No puts matching criteria right now</p>
+      ) : (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {topPuts.map(function(item, i) {
+            return <StrikeCard key={item.strike + '-put'} item={item} side="put" rank={i + 1} />;
+          })}
+        </div>
+      )}
+
+      <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #1e293b' }}>
+        <p style={{ fontSize: 10, color: '#334155', margin: 0 }}>
+          Score based on volume rank · writer activity · opposite side pressure · IV level · Not financial advice
+        </p>
+      </div>
+    </div>
+  );
+}
 export default function Options() {
   var { user }  = useAuth();
   var navigate  = useNavigate();
@@ -1255,6 +1432,7 @@ export default function Options() {
 
           <IVStatus history={data.iv_history || []} symbol={symbol} />
           <IVChart  history={data.iv_history || []} symbol={symbol} />
+          {data.top_strikes && <TopStrikesSection data={data} />}
 
           {/* FiveStrikeTable moved here — below IVChart */}
           <FiveStrikeTable
