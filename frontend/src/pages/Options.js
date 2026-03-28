@@ -1046,11 +1046,11 @@ function FiveStrikeTable(props) {
         {/* CE / PE COI boxes */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
           <div style={{ background: 'rgba(248,113,113,0.1)', borderRadius: 8, padding: '8px 12px' }}>
-            <p style={{ fontSize: 10, color: '#f87171', margin: '0 0 2px', fontWeight: 700 }}>Total CE COI (5 strikes)</p>
+            <p style={{ fontSize: 10, color: '#f87171', margin: '0 0 2px', fontWeight: 700 }}>Total CE COI (7 strikes)</p>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#f87171', margin: 0 }}>{fmt(totalCE)}</p>
           </div>
           <div style={{ background: 'rgba(74,222,128,0.1)', borderRadius: 8, padding: '8px 12px' }}>
-            <p style={{ fontSize: 10, color: '#4ade80', margin: '0 0 2px', fontWeight: 700 }}>Total PE COI (5 strikes)</p>
+            <p style={{ fontSize: 10, color: '#4ade80', margin: '0 0 2px', fontWeight: 700 }}>Total PE COI (7 strikes)</p>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#4ade80', margin: 0 }}>{fmt(totalPE)}</p>
           </div>
         </div>
@@ -1677,15 +1677,15 @@ export default function Options() {
               field="pcr"
             />
             <PCRCard
-              title="PCR — 7 Strike COI"
-              subtitle="COI(Put) / COI(Call) ATM ± 3 strikes"
+              title="PCR — All Strikes COI"
+              subtitle="COI(Put) / COI(Call) across all strikes"
               pcr={data.pcr_5strike || 0}
               sentiment={data.sentiment_5strike || 'Neutral'}
               prevPCR={prevPCRRef.current.pcr_5strike}
-              ceVal={data.five_ce_coi}
-              peVal={data.five_pe_coi}
-              ceLabel="CE COI (5 strikes)"
-              peLabel="PE COI (5 strikes)"
+              ceVal={data.total_ce_coi}
+              peVal={data.total_pe_coi}
+              ceLabel="Total CE COI"
+              peLabel="Total PE COI"
               history={data.pcr_history || []}
               field="pcr_5strike"
             />
