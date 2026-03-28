@@ -1704,16 +1704,7 @@ export default function Options() {
           <IVDashboard history={data.iv_history || []} symbol={symbol} tDays={data.top_strikes ? data.top_strikes.T_days : null} />
           {data.top_strikes && <TopStrikesSection data={data} />}
 
-          {/* FiveStrikeTable moved here — below IVChart */}
-          <FiveStrikeTable
-            rows={data.five_strike_rows || []}
-            pcr={data.pcr_5strike || 0}
-            sentiment={data.sentiment_5strike || 'Neutral'}
-            ceCOI={data.five_ce_coi}
-            peCOI={data.five_pe_coi}
-            history={data.pcr_history || []}
-            strikeHistory={data.strike_pcr_history || []}
-          />
+      
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <PCRIntradayTable
