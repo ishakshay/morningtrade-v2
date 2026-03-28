@@ -83,7 +83,7 @@ def get_vix_history():
     today = date.today().isoformat()
     return [h for h in _vix_history if h.get('date') == today]
 
-def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv):
+def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0):
     today = date.today().isoformat()
     if symbol not in _iv_history:
         _iv_history[symbol] = []
@@ -97,6 +97,8 @@ def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv):
         'ce_iv':     atm_ce_iv,
         'pe_iv':     atm_pe_iv,
         'avg_iv':    round((atm_ce_iv + atm_pe_iv) / 2, 2),
+        'ce_ltp':    atm_ce_ltp,
+        'pe_ltp':    atm_pe_ltp,
     })
     if len(hist) > 120:
         _iv_history[symbol] = hist[-120:]

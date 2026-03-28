@@ -85,7 +85,7 @@ def fetch_option_chain(symbol):
                 atm     = result.get('atm_strike')
                 atm_row = next((r for r in chain if r['strike'] == atm), None)
                 if atm_row and atm_row.get('ce_iv', 0) > 0:
-                    save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'])
+                    save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'], atm_row.get('ce_ltp', 0), atm_row.get('pe_ltp', 0))
                 result['iv_history'] = get_iv_history(symbol)
             except Exception as e:
                 print(f"  [nse_options] IV error: {e}")
@@ -256,8 +256,8 @@ def parse_option_chain(data, symbol):
     end_idx        = min(len(strikes), atm_idx + nearby_range + 1)
     nearby_strikes = set(strikes[start_idx:end_idx])
 
-    five_start   = max(0, atm_idx - 2)
-    five_end     = min(len(strikes), atm_idx + 3)
+    five_start   = max(0, atm_idx - 3)
+    five_end     = min(len(strikes), atm_idx + 4)
     five_strikes = set(strikes[five_start:five_end])
 
     three_start   = max(0, atm_idx - 1)
