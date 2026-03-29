@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import PageTitle from '../components/PageTitle';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import FuturesSentiment from './FuturesSentiment';
 
 var SYMBOLS = [
   { code: 'NIFTY',     label: 'NIFTY 50',  flag: '📊' },
@@ -1610,7 +1611,7 @@ export default function Options() {
               </div>
             );
           })()}
-
+<FuturesSentiment symbol={symbol} />
           <div style={{ display: 'flex', gap: 20, alignItems: 'center', padding: '12px 20px', background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 18, fontWeight: 800, color: '#f1f5f9' }}>{data.symbol}</span>
             <span style={{ fontSize: 18, fontWeight: 700, color: '#60a5fa' }}>{data.spot_price}</span>

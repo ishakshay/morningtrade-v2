@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+
 from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 from flask_sock import Sock
@@ -16,6 +17,7 @@ from screeners.market_session import run as get_all_sessions
 from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_history
 from screeners.nse_market import get_market_overview
 from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
+from screeners.nse_futures import poll_futures_sentiment, update_latest, get_latest
 
 _news_items_cache = {'data': [], 'ts': 0}
 NEWS_CACHE_TTL    = 300  # 5 minutes
@@ -74,6 +76,20 @@ def sanitize(obj):
 
 def safe_json(data):
     return json.dumps(sanitize(data))
+
+def refresh_futures():
+    symbols = ['NIFTY', 'BANKNIFTY']
+    while True:
+        print("\n--- Refreshing futures sentiment ---")
+        for symbol in symbols:
+            try:
+                payload = poll_futures_sentiment(symbol)
+                if payload:
+                    update_latest(symbol, payload)
+                    print(f"  [futures] {symbol} signal:{payload['signal']} conf:{payload['confidence']} basis:{payload['basis']}")
+            except Exception as e:
+                print(f"  [futures] {symbol} failed: {e}")
+        time.sleep(60)
 
 def refresh_market_overview():
     while True:
@@ -219,6 +235,21 @@ def get_options():
             return jsonify({'error': str(e)}), 500
     return jsonify(sanitize(data or {}))
 
+@app.route('/api/futures-sentiment')
+def get_futures_sentiment():
+    symbol = request.args.get('symbol', 'NIFTY').upper()
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
+        return jsonify({'error': 'Invalid symbol'}), 400
+    data = get_latest(symbol)
+    if not data:
+        try:
+            data = poll_futures_sentiment(symbol)
+            if data:
+                update_latest(symbol, data)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    return jsonify(sanitize(data or {}))
+
 @app.route('/api/options/pcr-history')
 def get_pcr_history_route():
     symbol = request.args.get('symbol', 'NIFTY').upper()
@@ -268,6 +299,8 @@ if __name__ == '__main__':
     t4.start()
     t5 = threading.Thread(target=refresh_market_overview, daemon=True)
     t5.start()
-    t_news = threading.Thread(target=refresh_news, daemon=True)
+    t_futures = threading.Thread(target=refresh_futures,  daemon=True)
+    t_futures.start()
+    t_news = threading.Thread(target=refresh_news,        daemon=True)
     t_news.start()
     app.run(port=3001, debug=False)

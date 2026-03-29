@@ -13,6 +13,7 @@ import Login from './pages/Login';
 import AuthSuccess from './pages/AuthSuccess';
 import IndicesTicker from './components/IndicesTicker';
 import News from './pages/News';
+import FuturesSentimentPage from './pages/FuturesSentimentPage';
 
 
 function FooterDisclaimer() {
@@ -72,10 +73,11 @@ function Sidebar({ collapsed, setCollapsed }) {
       ],
     },
     {
-      label: 'Options',
-      links: [
-        { to: '/options',      label: 'Options Analysis' },
-        { to: '/option-chain', label: 'Option Chain'     },
+  label: 'Options',
+  links: [
+    { to: '/options',            label: 'Options Analysis'  },
+    { to: '/option-chain',       label: 'Option Chain'      },
+    { to: '/futures-sentiment',  label: 'Futures Sentiment' },
       ],
     },
     {
@@ -257,6 +259,7 @@ function AppLayout() {
               <Route path="/pricing"        element={<Pricing />}      />
               <Route path="/options"        element={<Options />}      />
               <Route path="/option-chain"   element={<OptionChain />}  />
+              <Route path="/futures-sentiment" element={<FuturesSentimentPage />} />
               <Route path="/news" element={<News />} />
             </Routes>
           </div>
