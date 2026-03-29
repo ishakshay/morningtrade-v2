@@ -358,14 +358,9 @@ function UnwindAlerts(props) {
 }
 
 function OIActivityTable(props) {
-  var ceOI = props.ceOI || [];
-  var peOI = props.peOI || [];
-  var [tab, setTab] = useState('calls');
-
-  var rows   = tab === 'calls' ? ceOI : peOI;
-  var color  = tab === 'calls' ? '#f87171' : '#4ade80';
-  var barCol = tab === 'calls' ? '#dc2626'  : '#16a34a';
-  var maxOI  = Math.max.apply(null, rows.map(function(r) { return r.oi; }).concat([1]));
+  var chain = props.chain || [];
+  var ceOI  = chain.map(function(r) { return { strike: r.strike, oi: r.ce_oi, chg_oi: r.ce_chg_oi, vol: r.ce_vol, ltp: r.ce_ltp, signal: r.ce_signal }; });
+  var peOI  = chain.map(function(r) { return { strike: r.strike, oi: r.pe_oi, chg_oi: r.pe_chg_oi, vol: r.pe_vol, ltp: r.pe_ltp, signal: r.pe_signal }; });
 
   function fmt(n) {
     if (!n && n !== 0) return '—';
@@ -389,180 +384,159 @@ function OIActivityTable(props) {
     };
     var style = cols[sig] || { bg: 'rgba(100,116,139,0.15)', color: '#64748b' };
     return (
-      <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: style.bg, color: style.color, whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: style.bg, color: style.color, whiteSpace: 'nowrap' }}>
         {sig}
       </span>
     );
   }
 
+  // Combine CE and PE, only positive COI (fresh writing), sort by COI descending
+  var allWriting = [];
+  ceOI.forEach(function(r) {
+    if (r.chg_oi > 0) {
+      allWriting.push({
+        strike:  r.strike,
+        side:    'CE',
+        oi:      r.oi,
+        chg_oi:  r.chg_oi,
+        vol:     r.vol,
+        ltp:     r.ltp,
+        signal:  r.signal,
+      });
+    }
+  });
+  peOI.forEach(function(r) {
+    if (r.chg_oi > 0) {
+      allWriting.push({
+        strike:  r.strike,
+        side:    'PE',
+        oi:      r.oi,
+        chg_oi:  r.chg_oi,
+        vol:     r.vol,
+        ltp:     r.ltp,
+        signal:  r.signal,
+      });
+    }
+  });
+
+  // Sort by COI descending, take top 5
+  allWriting.sort(function(a, b) { return b.chg_oi - a.chg_oi; });
+  var top5 = allWriting.slice(0, 5);
+
+  var maxCOI = top5.length > 0 ? top5[0].chg_oi : 1;
+
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b' }}>
         <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Most Active by OI
+          Top 5 Options Being Written
         </p>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {['calls', 'puts'].map(function(t) {
-            return (
-              <button
-                key={t}
-                onClick={function() { setTab(t); }}
-                style={{
-                  border:       '1px solid #334155',
-                  borderRadius: 6,
-                  padding:      '4px 12px',
-                  cursor:       'pointer',
-                  fontSize:     11,
-                  fontWeight:   600,
-                  background:   tab === t ? (t === 'calls' ? '#dc2626' : '#16a34a') : 'transparent',
-                  color:        tab === t ? '#fff' : '#64748b',
-                }}
-              >
-                {t === 'calls' ? '📞 Calls' : '📉 Puts'}
-              </button>
-            );
-          })}
-        </div>
+        <p style={{ fontSize: 10, color: '#475569', margin: '3px 0 0' }}>
+          Highest fresh COI (positive change in OI) across calls and puts — where writers are most active
+        </p>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ background: '#1e293b' }}>
+            <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'left',   fontWeight: 600 }}>#</th>
             <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'left',   fontWeight: 600 }}>Strike</th>
+            <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>Side</th>
             <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'right',  fontWeight: 600 }}>OI</th>
-            <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'right',  fontWeight: 600 }}>Chg OI</th>
+            <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'right',  fontWeight: 600 }}>Fresh COI</th>
             <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'right',  fontWeight: 600 }}>Volume</th>
             <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'right',  fontWeight: 600 }}>LTP</th>
             <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>Signal</th>
-            <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>Bar</th>
+            <th style={{ padding: '7px 12px', color: '#94a3b8', textAlign: 'left',   fontWeight: 600 }}>Writing intensity</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(function(row) {
-            var barPct = (row.oi / maxOI) * 100;
-            return (
-              <tr key={row.strike} style={{ borderBottom: '1px solid #1e293b22' }}>
-                <td style={{ padding: '9px 12px', fontWeight: 700, color: '#f1f5f9', fontSize: 13 }}>{row.strike}</td>
-                <td style={{ padding: '9px 12px', textAlign: 'right', color: color, fontWeight: 700 }}>{fmt(row.oi)}</td>
-                <td style={{ padding: '9px 12px', textAlign: 'right', color: chgCol(row.chg_oi), fontWeight: 600 }}>
-                  {row.chg_oi > 0 ? '+' : ''}{fmt(row.chg_oi)}
-                </td>
-                <td style={{ padding: '9px 12px', textAlign: 'right', color: '#94a3b8' }}>{fmt(row.vol)}</td>
-                <td style={{ padding: '9px 12px', textAlign: 'right', color: '#f1f5f9' }}>{row.ltp}</td>
-                <td style={{ padding: '9px 12px', textAlign: 'center' }}>{buildupBadge(row.signal)}</td>
-                <td style={{ padding: '9px 12px' }}>
-                  <div style={{ height: 5, background: '#1e293b', borderRadius: 3, overflow: 'hidden', width: 80 }}>
-                    <div style={{ width: barPct + '%', height: '100%', background: barCol, borderRadius: 3 }} />
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
-        Sorted by highest OI · Signal based on price vs prev 3-min reading
-      </div>
-    </div>
-  );
-}
-
-function PCRIntradayTable(props) {
-  var data3m  = props.data3m  || [];
-  var data9m  = props.data9m  || [];
-  var data15m = props.data15m || [];
-  var symbol  = props.symbol  || 'NIFTY';
-  var [tab, setTab] = useState('3m');
-
-  var rows = tab === '3m' ? data3m : tab === '9m' ? data9m : data15m;
-
-  function fmtDiff(n) {
-    if (!n && n !== 0) return '—';
-    var abs = Math.abs(n);
-    if (abs >= 100000) return (n > 0 ? '+' : '') + (n / 100000).toFixed(1) + 'L';
-    if (abs >= 1000)   return (n > 0 ? '+' : '') + (n / 1000).toFixed(0) + 'K';
-    return (n > 0 ? '+' : '') + n;
-  }
-
-  function signalStyle(sig) {
-    if (sig === 'BUY')  return { color: '#4ade80', fontWeight: 700 };
-    if (sig === 'SELL') return { color: '#f87171', fontWeight: 700 };
-    return { color: '#f59e0b', fontWeight: 700 };
-  }
-
-  function pcrColor(pcr) {
-    if (pcr > 1.2) return '#4ade80';
-    if (pcr < 0.8) return '#f87171';
-    return '#f59e0b';
-  }
-
-  return (
-    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Intraday PCR — {symbol}
-        </p>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {['3m', '9m', '15m'].map(function(t) {
-            return (
-              <button
-                key={t}
-                onClick={function() { setTab(t); }}
-                style={{
-                  border:       '1px solid #334155',
-                  borderRadius: 6,
-                  padding:      '3px 10px',
-                  cursor:       'pointer',
-                  fontSize:     11,
-                  fontWeight:   600,
-                  background:   tab === t ? '#3b82f6' : 'transparent',
-                  color:        tab === t ? '#fff'    : '#64748b',
-                }}
-              >
-                {t}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-        <thead>
-          <tr style={{ background: '#1e293b' }}>
-            <th style={{ padding: '7px 14px', color: '#64748b', textAlign: 'left',   fontWeight: 600 }}>Time</th>
-            <th style={{ padding: '7px 14px', color: '#64748b', textAlign: 'right',  fontWeight: 600 }}>PE COI - CE COI</th>
-            <th style={{ padding: '7px 14px', color: '#64748b', textAlign: 'right',  fontWeight: 600 }}>PCR</th>
-            <th style={{ padding: '7px 14px', color: '#64748b', textAlign: 'center', fontWeight: 600 }}>Signal</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
+          {top5.length === 0 ? (
             <tr>
-              <td colSpan="4" style={{ padding: '24px', textAlign: 'center', color: '#475569', fontSize: 13 }}>
-                Collecting intraday data — updates every 3 minutes during market hours
+              <td colSpan="9" style={{ padding: '24px', textAlign: 'center', color: '#475569', fontSize: 13 }}>
+                No fresh writing detected — all COI flat or negative
               </td>
             </tr>
           ) : (
-            rows.map(function(row, i) {
-              var diff    = row.diff !== undefined ? row.diff : ((row.pe_coi || 0) - (row.ce_coi || 0));
-              var diffCol = diff > 0 ? '#4ade80' : '#f87171';
+            top5.map(function(row, i) {
+              var isCE     = row.side === 'CE';
+              var sideCol  = isCE ? '#f87171' : '#4ade80';
+              var sideBg   = isCE ? 'rgba(248,113,113,0.15)' : 'rgba(74,222,128,0.15)';
+              var barPct   = (row.chg_oi / maxCOI) * 100;
+              var barCol   = isCE ? '#dc2626' : '#16a34a';
               return (
-                <tr key={i} style={{ borderBottom: '1px solid #1e293b22' }}>
-                  <td style={{ padding: '9px 14px', color: '#f1f5f9', fontWeight: 600, fontFamily: 'monospace' }}>{row.time}</td>
-                  <td style={{ padding: '9px 14px', textAlign: 'right', color: diffCol, fontWeight: 700, fontFamily: 'monospace' }}>{fmtDiff(diff)}</td>
-                  <td style={{ padding: '9px 14px', textAlign: 'right', color: pcrColor(row.pcr), fontWeight: 700 }}>
-                    {row.pcr ? row.pcr.toFixed(2) : '—'}
+                <tr key={row.strike + row.side} style={{ borderBottom: '1px solid #1e293b22' }}>
+                  <td style={{ padding: '10px 12px', color: '#334155', fontWeight: 700 }}>#{i + 1}</td>
+                  <td style={{ padding: '10px 12px', fontWeight: 800, color: '#f1f5f9', fontSize: 14 }}>{row.strike}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 4, background: sideBg, color: sideCol }}>
+                      {row.side}
+                    </span>
                   </td>
-                  <td style={{ padding: '9px 14px', textAlign: 'center', ...signalStyle(row.signal) }}>{row.signal || '—'}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: sideCol, fontWeight: 700 }}>{fmt(row.oi)}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: '#4ade80', fontWeight: 700 }}>+{fmt(row.chg_oi)}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94a3b8' }}>{fmt(row.vol)}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: '#f1f5f9' }}>₹{row.ltp}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'center' }}>{buildupBadge(row.signal)}</td>
+                  <td style={{ padding: '10px 16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ flex: 1, height: 6, background: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ width: barPct + '%', height: '100%', background: barCol, borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontSize: 10, color: '#475569', minWidth: 32 }}>{Math.round(barPct)}%</span>
+                    </div>
+                  </td>
                 </tr>
               );
             })
           )}
         </tbody>
       </table>
+      <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
+        CE writing = bearish (resistance building) · PE writing = bullish (support building) · Sorted by fresh COI
+      </div>
     </div>
   );
 }
 
 
+function PCRHistory(props) {
+  var history = props.history || [];
+  var field   = props.field   || 'pcr';
+  var last10  = history.slice(-10).reverse(); // newest first
+ 
+  if (last10.length === 0) {
+    return <div style={{ fontSize: 10, color: '#334155' }}>no data</div>;
+  }
+ 
+  function pcrColor(v) {
+    if (v > 1.2) return '#4ade80';
+    if (v < 0.8) return '#f87171';
+    return '#f59e0b';
+  }
+ 
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
+      {last10.map(function(snap, i) {
+        var val     = snap[field] || 0;
+        var col     = pcrColor(val);
+        var prevVal = i < last10.length - 1 ? (last10[i + 1][field] || 0) : null;
+        var arrow   = prevVal === null ? '' : val > prevVal ? '↑' : val < prevVal ? '↓' : '→';
+        var arrowCol = arrow === '↑' ? '#4ade80' : arrow === '↓' ? '#f87171' : '#64748b';
+        var isFirst = i === 0;
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, opacity: isFirst ? 1 : 0.6 + (0.4 * (1 - i / last10.length)) }}>
+            <span style={{ fontSize: 9, color: '#475569', minWidth: 32 }}>{snap.time}</span>
+            <div style={{ flex: 1, height: 3, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ width: Math.min((val / 2) * 100, 100) + '%', height: '100%', background: col, borderRadius: 2 }} />
+            </div>
+            <span style={{ fontSize: 10, fontWeight: isFirst ? 700 : 500, color: col, minWidth: 28, textAlign: 'right' }}>{val.toFixed(2)}</span>
+            <span style={{ fontSize: 9, color: arrowCol, minWidth: 8 }}>{arrow}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function PCRCard(props) {
   var title     = props.title;
@@ -597,16 +571,18 @@ function PCRCard(props) {
         <p style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</p>
         <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>{subtitle}</p>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-          <span style={{ fontSize: 36, fontWeight: 800, color: color, lineHeight: 1 }}>{pcr.toFixed(2)}</span>
-          {trend && <span style={{ fontSize: 16, fontWeight: 700, color: trendCol }}>{trend}</span>}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div style={{ flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+            <span style={{ fontSize: 36, fontWeight: 800, color: color, lineHeight: 1 }}>{pcr.toFixed(2)}</span>
+            {trend && <span style={{ fontSize: 16, fontWeight: 700, color: trendCol }}>{trend}</span>}
+          </div>
           <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: bg, color: color, border: '1px solid ' + color + '44' }}>
             {sentiment}
           </span>
-          <Sparkline history={history} field={field} width={80} height={36} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <PCRHistory history={history} field={field} />
         </div>
       </div>
       <div style={{ position: 'relative', height: 6, background: '#1e293b', borderRadius: 4 }}>
@@ -1704,26 +1680,9 @@ export default function Options() {
           <IVDashboard history={data.iv_history || []} symbol={symbol} tDays={data.top_strikes ? data.top_strikes.T_days : null} />
           {data.top_strikes && <TopStrikesSection data={data} />}
 
-      
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <PCRIntradayTable
-              data3m={data.pcr_intraday_3m   || []}
-              data9m={data.pcr_intraday_9m   || []}
-              data15m={data.pcr_intraday_15m || []}
-              symbol="NIFTY"
-            />
-            <PCRIntradayTable
-              data3m={bnData  ? (bnData.pcr_intraday_3m  || []) : []}
-              data9m={bnData  ? (bnData.pcr_intraday_9m  || []) : []}
-              data15m={bnData ? (bnData.pcr_intraday_15m || []) : []}
-              symbol="BANKNIFTY"
-            />
-          </div>
 
           <OIActivityTable
-            ceOI={data.top_ce_oi || []}
-            peOI={data.top_pe_oi || []}
+            chain={data.chain || []}
           />
 
           <VolumeLeaders
