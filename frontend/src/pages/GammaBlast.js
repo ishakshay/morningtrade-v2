@@ -70,19 +70,36 @@ function ConditionRow(props) {
 
   var statusLabel = { 'HIGH': '●', 'MED': '◐', 'LOW': '○' }[c.status] || '○';
 
+  var NOTES = {
+    'proximity':  'How close spot is to the OI wall. Under 0.3% means the blast zone is active — writers are forced to hedge immediately.',
+    'oi_erosion': 'OI at the wall strike is falling — option writers are covering their positions. This is the earliest and most reliable warning signal.',
+    'iv_collapse':'IV at the wall strike is dropping despite spot approaching it. Writers are no longer defending — they expect the level to break.',
+    'futures':    'Futures signal confirms the blast direction. Long Buildup + expanding basis = institutional buying driving spot into the wall.',
+    'pcr':        'PCR shifting rapidly means traders are repositioning away from the wall. Collapsing PCR = call writers giving up resistance.',
+  };
+
+  var note = NOTES[c.id] || '';
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '9px 14px', background: statusBg,
+    <div style={{ padding: '9px 14px', background: statusBg,
                   border: '1px solid ' + c.color + '33', borderRadius: 8 }}>
-      <span style={{ fontSize: 16, color: c.color, minWidth: 16, lineHeight: 1 }}>{statusLabel}</span>
-      <div style={{ flex: 1 }}>
-        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>{c.label}</p>
-        <p style={{ margin: '2px 0 0', fontSize: 11, color: '#64748b' }}>{c.detail}</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 16, color: c.color, minWidth: 16, lineHeight: 1 }}>{statusLabel}</span>
+        <div style={{ flex: 1 }}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>{c.label}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 11, color: '#64748b' }}>{c.detail}</p>
+        </div>
+        <div style={{ textAlign: 'right', minWidth: 40 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: c.color }}>+{c.score}</span>
+          <p style={{ margin: 0, fontSize: 9, color: '#334155' }}>pts</p>
+        </div>
       </div>
-      <div style={{ textAlign: 'right', minWidth: 40 }}>
-        <span style={{ fontSize: 13, fontWeight: 800, color: c.color }}>+{c.score}</span>
-        <p style={{ margin: 0, fontSize: 9, color: '#334155' }}>pts</p>
-      </div>
+      {note && (
+        <p style={{ margin: '6px 0 0 28px', fontSize: 10, color: '#475569', lineHeight: 1.5,
+                    borderTop: '1px solid ' + c.color + '22', paddingTop: 6 }}>
+          {note}
+        </p>
+      )}
     </div>
   );
 }
