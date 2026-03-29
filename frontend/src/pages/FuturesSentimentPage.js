@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import PageTitle from '../components/PageTitle';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import GammaBlast from './GammaBlast';
 
 var API = 'http://localhost:3001';
 
@@ -573,6 +574,7 @@ export default function FuturesSentimentPage() {
         )}
 
         <SentimentCard data={data} />
+        <GammaBlast symbol={symbol} />
 
         {/* ── Signal reference ── */}
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,

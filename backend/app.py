@@ -18,6 +18,7 @@ from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_h
 from screeners.nse_market import get_market_overview
 from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
 from screeners.nse_futures import poll_futures_sentiment, update_latest, get_latest
+from screeners.nse_gamma import compute_gamma_blast
 
 _news_items_cache = {'data': [], 'ts': 0}
 NEWS_CACHE_TTL    = 300  # 5 minutes
@@ -60,8 +61,10 @@ sock = Sock(app)
 
 SCREENERS      = [intraday_booster, nr7, top_movers, momentum_spike, sector_scope]
 COUNTRIES      = list(SYMBOLS.keys())
-_options_cache = {}
-_market_cache  = {}
+_options_cache    = {}
+_market_cache     = {}
+_gamma_cache      = {}
+_prev_pcr_3strike = {}
 
 def sanitize(obj):
     if isinstance(obj, float):
@@ -112,6 +115,16 @@ def refresh_options():
                 if result:
                     _options_cache[symbol] = result
                     print(f"  [options] {symbol} done — PCR: {result.get('pcr_total')}")
+                    try:
+                        fut_payload = get_latest(symbol)
+                        prev_pcr    = _prev_pcr_3strike.get(symbol)
+                        gamma       = compute_gamma_blast(result, fut_payload, prev_pcr)
+                        if gamma:
+                            _gamma_cache[symbol]      = gamma
+                            _prev_pcr_3strike[symbol] = result.get('pcr_3strike', 0)
+                            print(f"  [gamma] {symbol} rating:{gamma['rating']} score:{gamma['score']} dir:{gamma['direction']}")
+                    except Exception as e:
+                        print(f"  [gamma] {symbol} failed: {e}")
             except Exception as e:
                 print(f"  [options] {symbol} failed: {e}")
         time.sleep(180)
@@ -233,6 +246,24 @@ def get_options():
                 _options_cache[symbol] = data
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+    return jsonify(sanitize(data or {}))
+
+@app.route('/api/gamma-blast')
+def get_gamma_blast():
+    symbol = request.args.get('symbol', 'NIFTY').upper()
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
+        return jsonify({'error': 'Invalid symbol'}), 400
+    data = _gamma_cache.get(symbol)
+    if not data:
+        options = _options_cache.get(symbol)
+        if options:
+            try:
+                fut  = get_latest(symbol)
+                data = compute_gamma_blast(options, fut, _prev_pcr_3strike.get(symbol))
+                if data:
+                    _gamma_cache[symbol] = data
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
     return jsonify(sanitize(data or {}))
 
 @app.route('/api/futures-sentiment')
