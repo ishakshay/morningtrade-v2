@@ -95,6 +95,17 @@ def refresh_futures():
                 print(f"  [futures] {symbol} failed: {e}")
         time.sleep(60)
 
+def refresh_futures_dashboard():
+    symbols = ['NIFTY', 'BANKNIFTY']
+    while True:
+        for symbol in symbols:
+            try:
+                options_data = _options_cache.get(symbol)
+                fetch_futures_dashboard(symbol, options_data)
+            except Exception as e:
+                print(f"  [futures_dashboard] {symbol} failed: {e}")
+        time.sleep(60)
+
 def refresh_market_overview():
     while True:
         print("\n--- Refreshing market overview ---")
@@ -360,4 +371,6 @@ if __name__ == '__main__':
     t_futures.start()
     t_news = threading.Thread(target=refresh_news,        daemon=True)
     t_news.start()
+    t_fd = threading.Thread(target=refresh_futures_dashboard, daemon=True)
+    t_fd.start()
     app.run(port=3001, debug=False)
