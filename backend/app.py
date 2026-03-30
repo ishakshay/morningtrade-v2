@@ -14,7 +14,7 @@ import cache
 from screeners import intraday_booster, nr7, top_movers, momentum_spike, indices, sector_scope
 from screeners.base import SYMBOLS, COUNTRY_LABELS
 from screeners.market_session import run as get_all_sessions
-from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_history
+from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_history, get_full_chain
 from screeners.nse_market import get_market_overview
 from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
 from screeners.nse_futures import poll_futures_sentiment, update_latest, get_latest
@@ -244,6 +244,22 @@ def get_options():
             data = fetch_options(symbol)
             if data:
                 _options_cache[symbol] = data
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    return jsonify(sanitize(data or {}))
+
+@app.route('/api/option-chain')
+def get_option_chain_full():
+    symbol = request.args.get('symbol', 'NIFTY').upper()
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
+        return jsonify({'error': 'Invalid symbol'}), 400
+    data = get_full_chain(symbol)
+    if not data:
+        try:
+            result = fetch_options(symbol)
+            if result:
+                _options_cache[symbol] = result
+                data = get_full_chain(symbol)
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     return jsonify(sanitize(data or {}))

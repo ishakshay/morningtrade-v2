@@ -966,16 +966,101 @@ function ConstituentTable(props) {
   );
 }
 
+
+function OIBar(props) {
+  var data      = props.data || {};
+  var totalCE   = data.total_ce_oi  || 0;
+  var totalPE   = data.total_pe_oi  || 0;
+  var totalCEV  = data.total_ce_vol || 0;
+  var totalPEV  = data.total_pe_vol || 0;
+  var totalCEC  = data.total_ce_coi || 0;
+  var totalPEC  = data.total_pe_coi || 0;
+  var pcr       = data.pcr_total    || 0;
+  var sentiment = data.sentiment_total || 'Neutral';
+  var oiTotal   = totalCE  + totalPE  || 1;
+  var volTotal  = totalCEV + totalPEV || 1;
+  var coiTotal  = Math.abs(totalCEC) + Math.abs(totalPEC) || 1;
+  var cePct     = Math.round((totalCE  / oiTotal)  * 100);
+  var pePct     = 100 - cePct;
+  var ceVolPct  = Math.round((totalCEV / volTotal) * 100);
+  var peVolPct  = 100 - ceVolPct;
+  var ceCOIPct  = Math.round((Math.abs(totalCEC) / coiTotal) * 100);
+  var peCOIPct  = 100 - ceCOIPct;
+  var volDiff    = totalPEV - totalCEV;
+  var coiDiff    = totalPEC - totalCEC;
+  var sCol       = sentiment === 'Bullish' ? '#4ade80' : sentiment === 'Bearish' ? '#f87171' : '#f59e0b';
+  var volDiffCol = volDiff > 0 ? '#4ade80' : volDiff < 0 ? '#f87171' : '#64748b';
+  var coiDiffCol = coiDiff > 0 ? '#4ade80' : coiDiff < 0 ? '#f87171' : '#64748b';
+  function fmtOI(n) {
+    if (!n && n !== 0) return '—';
+    var sign = n < 0 ? '-' : '';
+    var abs  = Math.abs(n);
+    if (abs >= 100000) return sign + (abs / 100000).toFixed(1) + 'L';
+    if (abs >= 1000)   return sign + (abs / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+  function Section(p) {
+    return (
+      <div style={{ background: '#1e293b', borderRadius: 8, padding: '10px 14px', border: '1px solid #334155', flex: 1, minWidth: 160 }}>
+        <p style={{ fontSize: 9, color: '#475569', margin: '0 0 8px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{p.title}</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div>
+            <p style={{ fontSize: 9, color: '#f87171', margin: '0 0 2px', fontWeight: 600 }}>CE</p>
+            <span style={{ fontSize: 15, fontWeight: 800, color: '#f87171' }}>{fmtOI(p.ce)}</span>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 600 }}>DIFF (PE−CE)</p>
+            <span style={{ fontSize: 13, fontWeight: 800, color: p.diffCol }}>{p.diff > 0 ? '+' : ''}{fmtOI(p.diff)}</span>
+            <p style={{ fontSize: 9, margin: '2px 0 0', color: p.diffCol, fontWeight: 600 }}>{p.diff > 0 ? '↑ PE Dom' : p.diff < 0 ? '↓ CE Dom' : 'Balanced'}</p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: 9, color: '#4ade80', margin: '0 0 2px', fontWeight: 600 }}>PE</p>
+            <span style={{ fontSize: 15, fontWeight: 800, color: '#4ade80' }}>{fmtOI(p.pe)}</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ width: p.cePct + '%', background: '#dc2626', transition: 'width 0.4s' }} />
+          <div style={{ width: p.pePct + '%', background: '#16a34a', transition: 'width 0.4s' }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: '#475569' }}>
+          <span>CE {p.cePct}%</span><span>PE {p.pePct}%</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: '12px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div>
+          <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>PCR (OI)</p>
+          <span style={{ fontSize: 22, fontWeight: 800, color: sCol }}>{pcr}</span>
+        </div>
+        <div style={{ padding: '4px 12px', borderRadius: 20, background: sCol + '20', border: '1px solid ' + sCol + '44' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: sCol }}>{sentiment}</span>
+        </div>
+        <p style={{ fontSize: 11, color: '#475569', margin: 0 }}>
+          {sentiment === 'Bullish' ? 'More PE OI — put writers building support below spot' : sentiment === 'Bearish' ? 'More CE OI — call writers building resistance above spot' : 'Balanced OI — no strong directional bias'}
+        </p>
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <Section title="Open Interest (OI)"  ce={totalCE}  pe={totalPE}  diff={totalPE - totalCE} diffCol={totalPE > totalCE ? '#4ade80' : '#f87171'} cePct={cePct}    pePct={pePct}    />
+        <Section title="Volume (Today)"      ce={totalCEV} pe={totalPEV} diff={volDiff}            diffCol={volDiffCol}                                cePct={ceVolPct} pePct={peVolPct} />
+        <Section title="Change in OI (COI)"  ce={totalCEC} pe={totalPEC} diff={coiDiff}            diffCol={coiDiffCol}                                cePct={ceCOIPct} pePct={peCOIPct} />
+      </div>
+    </div>
+  );
+}
+
 function FiveStrikeTable(props) {
-  var rows      = props.rows      || [];
-  var pcr       = props.pcr       || 0;
-  var sentiment = props.sentiment || 'Neutral';
-  var ceCOI     = props.ceCOI     || 0;
-  var peCOI     = props.peCOI     || 0;
-  var history       = props.history       || [];
-  var strikeHistory    = props.strikeHistory || [];
-  var reversedHistory  = strikeHistory.slice().reverse();
-  var color     = sentimentColor(sentiment);
+  var rows            = props.rows            || [];
+  var pcr             = props.pcr             || 0;
+  var sentiment       = props.sentiment       || 'Neutral';
+  var ceCOI           = props.ceCOI           || 0;
+  var peCOI           = props.peCOI           || 0;
+  var history         = props.history         || [];
+  var strikeHistory   = props.strikeHistory   || [];
+  var reversedHistory = strikeHistory.slice().reverse();
+  var color = sentimentColor(sentiment);
 
   function fmt(n) {
     if (!n && n !== 0) return '—';
@@ -986,9 +1071,13 @@ function FiveStrikeTable(props) {
     return (n > 0 ? '+' : '') + n;
   }
 
-  function chgCol(v) {
-    if (!v || v === 0) return '#64748b';
-    return v > 0 ? '#4ade80' : '#f87171';
+  function fmtDiff(n) {
+    if (!n && n !== 0) return '—';
+    var abs  = Math.abs(n);
+    var sign = n > 0 ? '+' : '';
+    if (abs >= 100000) return sign + (n / 100000).toFixed(1) + 'L';
+    if (abs >= 1000)   return sign + (n / 1000).toFixed(0) + 'K';
+    return (n > 0 ? '+' : '') + n;
   }
 
   function pcrColor(v) {
@@ -1003,8 +1092,7 @@ function FiveStrikeTable(props) {
   var cePct   = Math.round((Math.abs(totalCE) / total) * 100);
   var pePct   = 100 - cePct;
 
-  // last 6 snapshots for COI PCR trend
-  var last6 = history.slice(-6);
+  var last12 = history.slice(-12);
 
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
@@ -1012,21 +1100,23 @@ function FiveStrikeTable(props) {
 
         {/* Title + current PCR */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>ATM ± 3 Strikes — COI PCR</p>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            ATM ± 5 Strikes — COI PCR · Vol Bias
+          </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 22, fontWeight: 800, color: color }}>{pcr.toFixed(2)}</span>
             <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sentimentBg(sentiment), color: color, border: '1px solid ' + color + '44' }}>{sentiment}</span>
           </div>
         </div>
 
-        {/* CE / PE COI boxes */}
+        {/* CE / PE COI summary boxes */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
           <div style={{ background: 'rgba(248,113,113,0.1)', borderRadius: 8, padding: '8px 12px' }}>
-            <p style={{ fontSize: 10, color: '#f87171', margin: '0 0 2px', fontWeight: 700 }}>Total CE COI (7 strikes)</p>
+            <p style={{ fontSize: 10, color: '#f87171', margin: '0 0 2px', fontWeight: 700 }}>Total CE COI (11 strikes)</p>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#f87171', margin: 0 }}>{fmt(totalCE)}</p>
           </div>
           <div style={{ background: 'rgba(74,222,128,0.1)', borderRadius: 8, padding: '8px 12px' }}>
-            <p style={{ fontSize: 10, color: '#4ade80', margin: '0 0 2px', fontWeight: 700 }}>Total PE COI (7 strikes)</p>
+            <p style={{ fontSize: 10, color: '#4ade80', margin: '0 0 2px', fontWeight: 700 }}>Total PE COI (11 strikes)</p>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#4ade80', margin: 0 }}>{fmt(totalPE)}</p>
           </div>
         </div>
@@ -1041,34 +1131,25 @@ function FiveStrikeTable(props) {
           <span>PE {pePct}% writing</span>
         </div>
 
-        {/* Last 6 COI PCR trend */}
-        {last6.length > 0 && (
+        {/* COI PCR trend pills */}
+        {last12.length > 0 && (
           <div style={{ marginTop: 14 }}>
             <p style={{ fontSize: 10, fontWeight: 700, color: '#475569', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              COI PCR Trend — Last {last6.length} readings (every 3 min)
+              COI PCR Trend — Last {last12.length} readings (every 3 min)
             </p>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {last6.map(function(snap, i) {
+              {last12.map(function(snap, i) {
                 var val     = snap.pcr_5strike || 0;
                 var col     = pcrColor(val);
-                var isLast  = i === last6.length - 1;
-                var prevVal = i > 0 ? (last6[i - 1].pcr_5strike || 0) : null;
+                var isLast  = i === last12.length - 1;
+                var prevVal = i > 0 ? (last12[i - 1].pcr_5strike || 0) : null;
                 var arrow   = prevVal === null ? '' : val > prevVal ? ' ↑' : val < prevVal ? ' ↓' : ' →';
                 var arrowCol = prevVal === null ? '#64748b' : val > prevVal ? '#4ade80' : val < prevVal ? '#f87171' : '#64748b';
                 return (
-                  <div
-                    key={i}
-                    style={{
-                      display:        'flex',
-                      flexDirection:  'column',
-                      alignItems:     'center',
-                      padding:        '6px 10px',
-                      background:     isLast ? col + '22' : '#1e293b',
-                      border:         '1px solid ' + (isLast ? col + '66' : '#334155'),
-                      borderRadius:   8,
-                      minWidth:       52,
-                    }}
-                  >
+                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                        padding: '6px 10px', background: isLast ? col + '22' : '#1e293b',
+                                        border: '1px solid ' + (isLast ? col + '66' : '#334155'),
+                                        borderRadius: 8, minWidth: 52 }}>
                     <span style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>{snap.time}</span>
                     <span style={{ fontSize: 14, fontWeight: 800, color: col }}>
                       {val.toFixed(2)}
@@ -1085,54 +1166,99 @@ function FiveStrikeTable(props) {
         )}
       </div>
 
-      {/* Strike table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-        <thead>
-          <tr style={{ background: '#1e293b' }}>
-            <th style={{ padding: '8px 16px', color: '#f87171', textAlign: 'right',  fontWeight: 600 }}>CE COI</th>
-            <th style={{ padding: '8px 16px', color: '#f87171', textAlign: 'right',  fontWeight: 600 }}>CE Vol</th>
-            <th style={{ padding: '8px 16px', color: '#f1f5f9', textAlign: 'center', fontWeight: 700 }}>Strike</th>
-            <th style={{ padding: '8px 16px', color: '#4ade80', textAlign: 'left',   fontWeight: 600 }}>PE Vol</th>
-            <th style={{ padding: '8px 16px', color: '#4ade80', textAlign: 'left',   fontWeight: 600 }}>PE COI</th>
-            <th style={{ padding: '8px 16px', color: '#94a3b8', textAlign: 'center', fontWeight: 700, borderLeft: '1px solid #334155' }}>Now</th>
-            {reversedHistory.map(function(snap, i) {
-              return <th key={i} style={{ padding: '8px 10px', color: '#475569', textAlign: 'center', fontWeight: 600, fontSize: 10, whiteSpace: 'nowrap' }}>{snap.time}</th>;
+      {/* Strike table — Strike | Vol Bias (now) | COI PCR (now) | 12 historical snapshots each showing PCR + vol diff */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#1e293b' }}>
+              <th style={{ padding: '8px 14px', color: '#f1f5f9', textAlign: 'center', fontWeight: 700, whiteSpace: 'nowrap' }}>Strike</th>
+              <th style={{ padding: '8px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                Vol Bias
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>PE−CE Vol</span>
+              </th>
+              {reversedHistory.map(function(snap, i) {
+                return (
+                  <th key={i} style={{ padding: '6px 8px', color: '#475569', textAlign: 'center',
+                                       fontWeight: 600, fontSize: 9, whiteSpace: 'nowrap',
+                                       borderLeft: '1px solid #1e293b' }}>
+                    {snap.time}
+                    <span style={{ display: 'block', fontSize: 8, color: '#334155', fontWeight: 400 }}>PCR·ΔVol</span>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(function(row) {
+              var isATM  = row.is_atm;
+              var rowBg  = isATM ? 'rgba(96,165,250,0.1)' : 'transparent';
+              var pcrCol = pcrColor(row.pcr_coi);
+
+              var volDiff  = (row.pe_vol || 0) - (row.ce_vol || 0);
+              var volTotal = (row.pe_vol || 0) + (row.ce_vol || 0);
+              var domPct   = volTotal > 0 ? Math.round((Math.abs(volDiff) / volTotal) * 100) : 0;
+              var isBal    = volTotal === 0 || domPct < 10;
+              var isPEDom  = volDiff > 0;
+              var volCol   = isBal ? '#64748b' : isPEDom ? '#4ade80' : '#f87171';
+              var volLabel = isBal ? 'Balanced' : isPEDom ? 'PE Dom' : 'CE Dom';
+
+              return (
+                <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
+
+                  {/* Strike */}
+                  <td style={{ padding: '8px 14px', textAlign: 'center', fontWeight: 700,
+                               fontSize: 13, color: isATM ? '#60a5fa' : '#f1f5f9', whiteSpace: 'nowrap' }}>
+                    {row.strike}
+                    {isATM && <span style={{ display: 'block', fontSize: 9, color: '#60a5fa', fontWeight: 600 }}>ATM</span>}
+                  </td>
+
+                  {/* Vol Bias — current */}
+                  <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: volCol }}>
+                      {isBal ? '—' : fmtDiff(volDiff)}
+                    </span>
+                    <span style={{ display: 'block', fontSize: 9, fontWeight: 600, color: volCol, marginTop: 1 }}>
+                      {volLabel}
+                    </span>
+                  </td>
+
+
+                  {/* Historical snapshots — each shows COI PCR + vol diff */}
+                  {reversedHistory.map(function(snap, i) {
+                    var entry   = snap.strikes ? snap.strikes[String(row.strike)] : null;
+                    var pcr_h   = entry && typeof entry === 'object' ? entry.pcr_coi  : (typeof entry === 'number' ? entry : null);
+                    var vdiff_h = entry && typeof entry === 'object' ? entry.vol_diff : null;
+                    var col     = pcr_h != null ? pcrColor(pcr_h) : '#334155';
+
+                    var vdAbs   = vdiff_h != null ? Math.abs(vdiff_h) : 0;
+                    var vdFmt   = vdiff_h == null ? '—'
+                                : vdAbs >= 100000 ? (vdiff_h > 0 ? '+' : '') + (vdiff_h / 100000).toFixed(1) + 'L'
+                                : vdAbs >= 1000   ? (vdiff_h > 0 ? '+' : '') + (vdiff_h / 1000).toFixed(0) + 'K'
+                                : (vdiff_h > 0 ? '+' : '') + vdiff_h;
+                    var vdCol   = vdiff_h == null ? '#334155' : vdiff_h > 0 ? '#4ade80' : vdiff_h < 0 ? '#f87171' : '#64748b';
+
+                    return (
+                      <td key={i} style={{ padding: '8px 8px', textAlign: 'center',
+                                           borderLeft: '1px solid #1e293b', minWidth: 64 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: col }}>
+                          {pcr_h != null ? pcr_h.toFixed(2) : '—'}
+                        </span>
+                        <span style={{ display: 'block', fontSize: 9, color: vdCol, marginTop: 1 }}>
+                          {vdFmt}
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
             })}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(function(row) {
-            var isATM  = row.is_atm;
-            var rowBg  = isATM ? 'rgba(96,165,250,0.1)' : 'transparent';
-            var pcrCol = pcrColor(row.pcr_coi);
-            return (
-              <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
-                <td style={{ padding: '10px 16px', textAlign: 'right',  color: chgCol(row.ce_chg_oi), fontWeight: 600 }}>{fmt(row.ce_chg_oi)}</td>
-                <td style={{ padding: '10px 16px', textAlign: 'right',  color: '#94a3b8' }}>{fmt(row.ce_vol)}</td>
-                <td style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, fontSize: 13, color: isATM ? '#60a5fa' : '#f1f5f9' }}>
-                  {row.strike}
-                  {isATM && <span style={{ display: 'block', fontSize: 9, color: '#60a5fa', fontWeight: 600 }}>ATM</span>}
-                </td>
-                <td style={{ padding: '10px 16px', textAlign: 'left',   color: '#94a3b8' }}>{fmt(row.pe_vol)}</td>
-                <td style={{ padding: '10px 16px', textAlign: 'left',   color: chgCol(row.pe_chg_oi), fontWeight: 600 }}>{fmt(row.pe_chg_oi)}</td>
-                <td style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, color: pcrCol, borderLeft: '1px solid #334155' }}>{row.pcr_coi || '—'}</td>
-                {reversedHistory.map(function(snap, i) {
-                  var val     = snap.strikes ? snap.strikes[String(row.strike)] : null;
-                  var col     = val != null ? pcrColor(val) : '#334155';
-                  var prevVal = i > 0 && reversedHistory[i-1].strikes ? reversedHistory[i-1].strikes[String(row.strike)] : null;
-                  var arrow   = val != null && prevVal != null ? (val > prevVal ? '↑' : val < prevVal ? '↓' : '') : '';
-                  return (
-                    <td key={i} style={{ padding: '10px 10px', textAlign: 'center', color: col, fontWeight: 500, fontSize: 11 }}>
-                      {val != null ? val.toFixed(2) : '—'}
-                      {arrow && <span style={{ fontSize: 9, marginLeft: 2, color: arrow === '↑' ? '#4ade80' : '#f87171' }}>{arrow}</span>}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
+        Vol Bias: PE Dom = put side more active · CE Dom = call side more active · Each historical column shows COI PCR (top) + Vol Diff PE−CE (bottom)
+      </div>
     </div>
   );
 }
@@ -1548,69 +1674,6 @@ export default function Options() {
       {data && !data.error && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {(function() {
-            var pcr        = data.pcr_total     || 0;
-            var pcr5       = data.pcr_5strike   || 0;
-            var fiveCE     = data.five_ce_coi   || 0;
-            var fivePE     = data.five_pe_coi   || 0;
-            var ts         = data.top_strikes   || {};
-            var ivHistory  = data.iv_history    || [];
-            var tDays      = ts.T_days;
-            var ivRising   = ts.iv_rising;
-            var topCalls   = (ts.top_calls || []).length;
-            var topPuts    = (ts.top_puts  || []).length;
-
-            var bullPoints = 0;
-            var bearPoints = 0;
-            var reasons    = [];
-
-            if (pcr > 1.2)      { bullPoints += 2; reasons.push('PCR ' + pcr + ' bullish'); }
-            else if (pcr < 0.8) { bearPoints += 2; reasons.push('PCR ' + pcr + ' bearish'); }
-
-            if (fivePE > fiveCE) { bullPoints += 2; reasons.push('PE writing > CE ✓'); }
-            else if (fiveCE > fivePE) { bearPoints += 2; reasons.push('CE writing > PE ✓'); }
-
-            if (pcr5 > 1.2)      { bullPoints += 1; }
-            else if (pcr5 < 0.8) { bearPoints += 1; }
-
-            if (topCalls > topPuts)      { bullPoints += 2; reasons.push(topCalls + ' qualifying calls'); }
-            else if (topPuts > topCalls) { bearPoints += 2; reasons.push(topPuts + ' qualifying puts'); }
-
-            if (ivRising) { reasons.push('IV rising — premium expensive'); }
-            else          { reasons.push('IV stable/falling — good for buyers'); }
-
-            if (tDays !== null && tDays <= 2) {
-              reasons.push(tDays + 'd to expiry — theta risk high');
-            }
-
-            var signal, color, bg, border, emoji;
-            if (tDays !== null && tDays <= 1) {
-              signal = 'Expiry Day — Avoid Fresh Buys';
-              color  = '#f59e0b'; bg = 'rgba(245,158,11,0.08)'; border = '#f59e0b44'; emoji = '⚠️';
-            } else if (bullPoints >= bearPoints + 2) {
-              signal = 'Bias: Buy Call';
-              color  = '#4ade80'; bg = 'rgba(74,222,128,0.08)'; border = '#4ade8044'; emoji = '📞';
-            } else if (bearPoints >= bullPoints + 2) {
-              signal = 'Bias: Buy Put';
-              color  = '#f87171'; bg = 'rgba(248,113,113,0.08)'; border = '#f8717144'; emoji = '📉';
-            } else {
-              signal = 'Neutral — No Clear Edge';
-              color  = '#64748b'; bg = 'rgba(100,116,139,0.08)'; border = '#64748b44'; emoji = '⟷';
-            }
-
-            return (
-              <div style={{ background: bg, border: '1px solid ' + border, borderLeft: '4px solid ' + color, borderRadius: 10, padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 20 }}>{emoji}</span>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: color }}>{signal}</span>
-                </div>
-                <div style={{ height: 20, width: 1, background: border }} />
-                <span style={{ fontSize: 11, color: '#94a3b8', flex: 1 }}>{reasons.join(' · ')}</span>
-                <span style={{ fontSize: 10, color: '#334155' }}>Bull {bullPoints}pt · Bear {bearPoints}pt</span>
-              </div>
-            );
-          })()}
-
           <div style={{ display: 'flex', gap: 20, alignItems: 'center', padding: '12px 20px', background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 18, fontWeight: 800, color: '#f1f5f9' }}>{data.symbol}</span>
             <span style={{ fontSize: 18, fontWeight: 700, color: '#60a5fa' }}>{data.spot_price}</span>
@@ -1638,35 +1701,7 @@ export default function Options() {
             <UnwindAlerts alerts={data.unwind_alerts} />
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <PCRCard
-              title="PCR — Total OI"
-              subtitle="Put OI / Call OI across all strikes"
-              pcr={data.pcr_total || 0}
-              sentiment={data.sentiment_total || 'Neutral'}
-              prevPCR={prevPCRRef.current.pcr_total}
-              ceVal={data.total_ce_oi}
-              peVal={data.total_pe_oi}
-              ceLabel="Total CE OI"
-              peLabel="Total PE OI"
-              history={data.pcr_history || []}
-              field="pcr"
-            />
-            <PCRCard
-              title="PCR — All Strikes COI"
-              subtitle="COI(Put) / COI(Call) across all strikes"
-              pcr={data.pcr_5strike || 0}
-              sentiment={data.sentiment_5strike || 'Neutral'}
-              prevPCR={prevPCRRef.current.pcr_5strike}
-              ceVal={data.total_ce_coi}
-              peVal={data.total_pe_coi}
-              ceLabel="Total CE COI"
-              peLabel="Total PE COI"
-              history={data.pcr_history || []}
-              field="pcr_5strike"
-            />
-          </div>
-
+          <OIBar data={data} />
           <FiveStrikeTable
             rows={data.five_strike_rows || []}
             pcr={data.pcr_5strike || 0}

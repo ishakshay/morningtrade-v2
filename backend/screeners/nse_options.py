@@ -7,6 +7,7 @@ _nse              = None
 _pcr_history      = {}
 _prev_prices      = {}
 _strike_pcr_hist  = {}
+_full_chain_cache = {}
 
 def get_nse():
     global _nse
@@ -36,6 +37,8 @@ def safe_int(val, default=0):
     except:
         return default
 
+# ─── Strike PCR + vol diff snapshot (12 readings) ────────────────────────────
+
 def save_strike_pcr_snapshot(symbol, five_strike_rows):
     global _strike_pcr_hist
     today   = date.today().isoformat()
@@ -48,10 +51,16 @@ def save_strike_pcr_snapshot(symbol, five_strike_rows):
     for row in five_strike_rows:
         strike = row.get('strike')
         if strike:
-            snapshot['strikes'][str(strike)] = round(row.get('pcr_coi') or 0, 2)
+            ce_vol   = row.get('ce_vol') or 0
+            pe_vol   = row.get('pe_vol') or 0
+            vol_diff = pe_vol - ce_vol
+            snapshot['strikes'][str(strike)] = {
+                'pcr_coi':  round(row.get('pcr_coi') or 0, 2),
+                'vol_diff': vol_diff,
+            }
     _strike_pcr_hist[symbol]['snapshots'].append(snapshot)
-    if len(_strike_pcr_hist[symbol]['snapshots']) > 6:
-        _strike_pcr_hist[symbol]['snapshots'] = _strike_pcr_hist[symbol]['snapshots'][-6:]
+    if len(_strike_pcr_hist[symbol]['snapshots']) > 12:
+        _strike_pcr_hist[symbol]['snapshots'] = _strike_pcr_hist[symbol]['snapshots'][-12:]
 
 def get_strike_pcr_history(symbol):
     today = date.today().isoformat()
@@ -60,6 +69,22 @@ def get_strike_pcr_history(symbol):
     if _strike_pcr_hist[symbol]['date'] != today:
         return []
     return _strike_pcr_hist[symbol]['snapshots']
+
+# ─── Full chain cache ─────────────────────────────────────────────────────────
+
+def save_full_chain(symbol, payload):
+    today = date.today().isoformat()
+    _full_chain_cache[symbol] = {'date': today, 'data': payload}
+
+def get_full_chain(symbol):
+    today = date.today().isoformat()
+    if symbol not in _full_chain_cache:
+        return None
+    if _full_chain_cache[symbol]['date'] != today:
+        return None
+    return _full_chain_cache[symbol]['data']
+
+# ─── Main fetch ───────────────────────────────────────────────────────────────
 
 def fetch_option_chain(symbol):
     nse = get_nse()
@@ -74,11 +99,9 @@ def fetch_option_chain(symbol):
             save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
             result['pcr_history'] = get_pcr_history(symbol)
 
-            # Per-strike PCR history
             save_strike_pcr_snapshot(symbol, result.get('five_strike_rows', []))
             result['strike_pcr_history'] = get_strike_pcr_history(symbol)
 
-            # IV snapshot
             try:
                 from screeners.nse_market import save_iv_snapshot, get_iv_history
                 chain   = result.get('chain', [])
@@ -91,15 +114,9 @@ def fetch_option_chain(symbol):
                 print(f"  [nse_options] IV error: {e}")
                 result['iv_history'] = []
 
-            # PCR intraday
             try:
                 from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
-                save_pcr_intraday(
-                    symbol,
-                    result['pcr_3strike'],
-                    result.get('three_ce_coi', 0),
-                    result.get('three_pe_coi', 0),
-                )
+                save_pcr_intraday(symbol, result['pcr_3strike'], result.get('three_ce_coi', 0), result.get('three_pe_coi', 0))
                 result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
                 result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
                 result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
@@ -109,13 +126,17 @@ def fetch_option_chain(symbol):
                 result['pcr_intraday_9m']  = []
                 result['pcr_intraday_15m'] = []
 
-            # Top strikes for option buyers (Black-Scholes greeks)
             try:
                 from screeners.options_greeks import get_top_strikes
                 result['top_strikes'] = get_top_strikes(result, result.get('iv_history', []))
             except Exception as e:
                 print(f"  [nse_options] greeks error: {e}")
                 result['top_strikes'] = None
+
+            full = result.get('full_chain_payload')
+            if full:
+                save_full_chain(symbol, full)
+                del result['full_chain_payload']
 
             print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr_total:{result['pcr_total']} pcr_3s:{result['pcr_3strike']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")
 
@@ -256,8 +277,9 @@ def parse_option_chain(data, symbol):
     end_idx        = min(len(strikes), atm_idx + nearby_range + 1)
     nearby_strikes = set(strikes[start_idx:end_idx])
 
-    five_start   = max(0, atm_idx - 3)
-    five_end     = min(len(strikes), atm_idx + 4)
+    # ATM ±5 = 11 strikes
+    five_start   = max(0, atm_idx - 5)
+    five_end     = min(len(strikes), atm_idx + 6)
     five_strikes = set(strikes[five_start:five_end])
 
     three_start   = max(0, atm_idx - 1)
@@ -272,6 +294,7 @@ def parse_option_chain(data, symbol):
     prev_data = _prev_prices[symbol]['data']
 
     chain_rows       = []
+    full_chain_rows  = []
     total_ce_oi      = 0
     total_pe_oi      = 0
     total_ce_vol     = 0
@@ -325,34 +348,18 @@ def parse_option_chain(data, symbol):
 
         UNWIND_THRESHOLD = 50000
         if ce_chg_oi < -UNWIND_THRESHOLD and strike in nearby_strikes:
-            unwind_alerts.append({
-                'strike': strike, 'side': 'CE',
-                'chg_oi': ce_chg_oi, 'ltp': round(ce_ltp, 2),
-                'signal': 'Call OI Unwinding', 'color': '#60a5fa',
-            })
+            unwind_alerts.append({'strike': strike, 'side': 'CE', 'chg_oi': ce_chg_oi, 'ltp': round(ce_ltp, 2), 'signal': 'Call OI Unwinding', 'color': '#60a5fa'})
         if pe_chg_oi < -UNWIND_THRESHOLD and strike in nearby_strikes:
-            unwind_alerts.append({
-                'strike': strike, 'side': 'PE',
-                'chg_oi': pe_chg_oi, 'ltp': round(pe_ltp, 2),
-                'signal': 'Put OI Unwinding', 'color': '#f59e0b',
-            })
+            unwind_alerts.append({'strike': strike, 'side': 'PE', 'chg_oi': pe_chg_oi, 'ltp': round(pe_ltp, 2), 'signal': 'Put OI Unwinding', 'color': '#f59e0b'})
 
         if ce_vol > 0:
             all_ce_vol.append({'strike': strike, 'volume': ce_vol, 'ltp': round(ce_ltp, 2), 'oi': ce_oi, 'chg_oi': ce_chg_oi})
         if pe_vol > 0:
             all_pe_vol.append({'strike': strike, 'volume': pe_vol, 'ltp': round(pe_ltp, 2), 'oi': pe_oi, 'chg_oi': pe_chg_oi})
         if ce_oi > 0:
-            all_ce_oi_list.append({
-                'strike': strike, 'oi': ce_oi, 'chg_oi': ce_chg_oi,
-                'ltp': round(ce_ltp, 2), 'vol': ce_vol,
-                'signal': ce_sig, 'sig_color': buildup_color(ce_sig),
-            })
+            all_ce_oi_list.append({'strike': strike, 'oi': ce_oi, 'chg_oi': ce_chg_oi, 'ltp': round(ce_ltp, 2), 'vol': ce_vol, 'signal': ce_sig, 'sig_color': buildup_color(ce_sig)})
         if pe_oi > 0:
-            all_pe_oi_list.append({
-                'strike': strike, 'oi': pe_oi, 'chg_oi': pe_chg_oi,
-                'ltp': round(pe_ltp, 2), 'vol': pe_vol,
-                'signal': pe_sig, 'sig_color': buildup_color(pe_sig),
-            })
+            all_pe_oi_list.append({'strike': strike, 'oi': pe_oi, 'chg_oi': pe_chg_oi, 'ltp': round(pe_ltp, 2), 'vol': pe_vol, 'signal': pe_sig, 'sig_color': buildup_color(pe_sig)})
 
         if strike == atm_strike:
             atm_ce_coi = ce_chg_oi
@@ -367,8 +374,8 @@ def parse_option_chain(data, symbol):
             five_pe_coi += pe_chg_oi
             pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi > 0 else 0
             five_strike_rows.append({
-                'strike':     strike,
-                'is_atm':    strike == atm_strike,
+                'strike':    strike,
+                'is_atm':   strike == atm_strike,
                 'ce_chg_oi': ce_chg_oi,
                 'pe_chg_oi': pe_chg_oi,
                 'ce_vol':    ce_vol,
@@ -400,10 +407,31 @@ def parse_option_chain(data, symbol):
                 'pcr_strike':   pcr_strike,
             })
 
-        prev_data[strike] = {
-            'ce_ltp': ce_ltp, 'ce_oi': ce_oi,
-            'pe_ltp': pe_ltp, 'pe_oi': pe_oi,
-        }
+        # Full chain — all strikes
+        pcr_strike_full = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0
+        full_chain_rows.append({
+            'strike':       strike,
+            'is_atm':       strike == atm_strike,
+            'ce_oi':        ce_oi,
+            'ce_chg_oi':    ce_chg_oi,
+            'ce_vol':       ce_vol,
+            'ce_ltp':       round(ce_ltp, 2),
+            'ce_iv':        round(ce_iv, 2),
+            'ce_signal':    ce_sig,
+            'ce_sig_color': buildup_color(ce_sig),
+            'ce_sig_short': buildup_short(ce_sig),
+            'pe_oi':        pe_oi,
+            'pe_chg_oi':    pe_chg_oi,
+            'pe_vol':       pe_vol,
+            'pe_ltp':       round(pe_ltp, 2),
+            'pe_iv':        round(pe_iv, 2),
+            'pe_signal':    pe_sig,
+            'pe_sig_color': buildup_color(pe_sig),
+            'pe_sig_short': buildup_short(pe_sig),
+            'pcr_strike':   pcr_strike_full,
+        })
+
+        prev_data[strike] = {'ce_ltp': ce_ltp, 'ce_oi': ce_oi, 'pe_ltp': pe_ltp, 'pe_oi': pe_oi}
 
     pcr_total   = round(total_pe_oi  / total_ce_oi,  2) if total_ce_oi  > 0 else 0
     pcr_atm     = round(atm_pe_coi   / atm_ce_coi,   2) if atm_ce_coi   > 0 else 0
@@ -429,6 +457,37 @@ def parse_option_chain(data, symbol):
     resistance2_strike = top_ce[1]['strike'] if len(top_ce) > 1 else None
     resistance3_strike = top_ce[2]['strike'] if len(top_ce) > 2 else None
     max_pain_distance  = round(spot_price - max_pain_strike, 2) if max_pain_strike else 0
+
+    full_chain_payload = {
+        'symbol':            symbol,
+        'spot_price':        round(spot_price, 2),
+        'atm_strike':        atm_strike,
+        'max_pain':          max_pain_strike,
+        'max_pain_distance': max_pain_distance,
+        'support':           support_strike,
+        'support2':          support2_strike,
+        'support3':          support3_strike,
+        'resistance':        resistance_strike,
+        'resistance2':       resistance2_strike,
+        'resistance3':       resistance3_strike,
+        'expiry':            current_expiry,
+        'next_expiry':       next_expiry,
+        'monthly_expiry':    monthly_expiry,
+        'all_expiries':      expiry_dates[:6],
+        'pcr_total':         pcr_total,
+        'sentiment_total':   sentiment_label(pcr_total),
+        'total_ce_oi':       total_ce_oi,
+        'total_pe_oi':       total_pe_oi,
+        'total_ce_vol':      total_ce_vol,
+        'total_pe_vol':      total_pe_vol,
+        'total_ce_coi':      total_ce_coi,
+        'total_pe_coi':      total_pe_coi,
+        'chain':             sorted(full_chain_rows, key=lambda x: x['strike'], reverse=True),
+        'total_strikes':     len(full_chain_rows),
+        'timestamp':         datetime.now().strftime('%H:%M:%S'),
+        'market_open':       is_market_open(),
+        'iv_history':        [],
+    }
 
     return {
         'symbol':            symbol,
@@ -470,7 +529,10 @@ def parse_option_chain(data, symbol):
         'total_pe_oi':       total_pe_oi,
         'total_ce_vol':      total_ce_vol,
         'total_pe_vol':      total_pe_vol,
+        'total_ce_coi':      total_ce_coi,
+        'total_pe_coi':      total_pe_coi,
         'chain':             sorted(chain_rows, key=lambda x: x['strike'], reverse=True),
         'timestamp':         datetime.now().strftime('%H:%M:%S'),
         'market_open':       is_market_open(),
+        'full_chain_payload': full_chain_payload,
     }
