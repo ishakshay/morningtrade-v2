@@ -15,6 +15,7 @@ from screeners import intraday_booster, nr7, top_movers, momentum_spike, indices
 from screeners.base import SYMBOLS, COUNTRY_LABELS
 from screeners.market_session import run as get_all_sessions
 from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_history, get_full_chain
+from screeners.nse_futures_dashboard import fetch_dashboard as fetch_futures_dashboard
 from screeners.nse_market import get_market_overview
 from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
 from screeners.nse_futures import poll_futures_sentiment, update_latest, get_latest
@@ -301,6 +302,15 @@ def get_futures_sentiment():
 def get_pcr_history_route():
     symbol = request.args.get('symbol', 'NIFTY').upper()
     return jsonify(sanitize(get_pcr_history(symbol)))
+
+@app.route('/api/futures-dashboard')
+def get_futures_dashboard():
+    symbol = request.args.get('symbol', 'NIFTY').upper()
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
+        return jsonify({'error': 'Invalid symbol'}), 400
+    options_data = _options_cache.get(symbol)
+    result = fetch_futures_dashboard(symbol, options_data)
+    return jsonify(sanitize(result or {}))
 
 @app.route('/api/countries')
 def get_countries():

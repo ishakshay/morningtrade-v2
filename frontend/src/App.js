@@ -14,6 +14,7 @@ import AuthSuccess from './pages/AuthSuccess';
 import IndicesTicker from './components/IndicesTicker';
 import News from './pages/News';
 import FuturesSentimentPage from './pages/FuturesSentimentPage';
+import FuturesDashboard from './pages/FuturesDashboard';
 
 
 function FooterDisclaimer() {
@@ -78,6 +79,7 @@ function Sidebar({ collapsed, setCollapsed }) {
     { to: '/options',            label: 'Options Analysis'  },
     { to: '/option-chain',       label: 'Option Chain'      },
     { to: '/futures-sentiment',  label: 'Futures Sentiment' },
+    { to: '/futures-dashboard',  label: 'Futures Dashboard' },
       ],
     },
     {
@@ -260,6 +262,7 @@ function AppLayout() {
               <Route path="/options"        element={<Options />}      />
               <Route path="/option-chain"   element={<OptionChain />}  />
               <Route path="/futures-sentiment" element={<FuturesSentimentPage />} />
+              <Route path="/futures-dashboard" element={<FuturesDashboard />} />
               <Route path="/news" element={<News />} />
             </Routes>
           </div>
