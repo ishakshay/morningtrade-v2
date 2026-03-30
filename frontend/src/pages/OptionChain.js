@@ -31,8 +31,6 @@ var BUILDUP_PE = {
   'Long Unwinding': { color: '#60a5fa', short: 'LU', meaning: 'Buyers Exiting · Bullish'  },
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function fmt(n) {
   if (!n && n !== 0) return '—';
   var sign = n < 0 ? '-' : '';
@@ -44,10 +42,9 @@ function fmt(n) {
 
 function fmtChg(n) {
   if (!n && n !== 0) return '—';
-  var sign = n > 0 ? '+' : '';
-  var abs  = Math.abs(n);
-  if (abs >= 100000) return sign + (n / 100000).toFixed(1) + 'L';
-  if (abs >= 1000)   return sign + (n / 1000).toFixed(0) + 'K';
+  var abs = Math.abs(n);
+  if (abs >= 100000) return (n > 0 ? '+' : '') + (n / 100000).toFixed(1) + 'L';
+  if (abs >= 1000)   return (n > 0 ? '+' : '') + (n / 1000).toFixed(0) + 'K';
   return (n > 0 ? '+' : '') + n;
 }
 
@@ -55,8 +52,6 @@ function chgCol(v) {
   if (!v || v === 0) return '#64748b';
   return v > 0 ? '#4ade80' : '#f87171';
 }
-
-// ─── BuildupBadge ─────────────────────────────────────────────────────────────
 
 function BuildupBadge(props) {
   var sig  = props.signal;
@@ -79,54 +74,44 @@ function BuildupBadge(props) {
 }
 
 function OIBar(props) {
-  var data = props.data || {};
-  var totalCE  = data.total_ce_oi  || 0;
-  var totalPE  = data.total_pe_oi  || 0;
-  var totalCEV = data.total_ce_vol || 0;
-  var totalPEV = data.total_pe_vol || 0;
-  var totalCEC = data.total_ce_coi || 0;
-  var totalPEC = data.total_pe_coi || 0;
-  var pcr      = data.pcr_total    || 0;
+  var data      = props.data || {};
+  var totalCE   = data.total_ce_oi  || 0;
+  var totalPE   = data.total_pe_oi  || 0;
+  var totalCEV  = data.total_ce_vol || 0;
+  var totalPEV  = data.total_pe_vol || 0;
+  var totalCEC  = data.total_ce_coi || 0;
+  var totalPEC  = data.total_pe_coi || 0;
+  var pcr       = data.pcr_total    || 0;
   var sentiment = data.sentiment_total || 'Neutral';
-
-  var oiTotal  = totalCE  + totalPE  || 1;
-  var volTotal = totalCEV + totalPEV || 1;
-  var coiTotal = Math.abs(totalCEC) + Math.abs(totalPEC) || 1;
-
-  var cePct    = Math.round((totalCE  / oiTotal)  * 100);
-  var pePct    = 100 - cePct;
-  var ceVolPct = Math.round((totalCEV / volTotal) * 100);
-  var peVolPct = 100 - ceVolPct;
-  var ceCOIPct = Math.round((Math.abs(totalCEC) / coiTotal) * 100);
-  var peCOIPct = 100 - ceCOIPct;
-
-  var volDiff  = totalPEV - totalCEV;
-  var coiDiff  = totalPEC - totalCEC;
-
-  var sCol = sentiment === 'Bullish' ? '#4ade80' : sentiment === 'Bearish' ? '#f87171' : '#f59e0b';
-  var volDiffCol  = volDiff  > 0 ? '#4ade80' : volDiff  < 0 ? '#f87171' : '#64748b';
-  var coiDiffCol  = coiDiff  > 0 ? '#4ade80' : coiDiff  < 0 ? '#f87171' : '#64748b';
+  var oiTotal   = totalCE  + totalPE  || 1;
+  var volTotal  = totalCEV + totalPEV || 1;
+  var coiTotal  = Math.abs(totalCEC) + Math.abs(totalPEC) || 1;
+  var cePct     = Math.round((totalCE  / oiTotal)  * 100);
+  var pePct     = 100 - cePct;
+  var ceVolPct  = Math.round((totalCEV / volTotal) * 100);
+  var peVolPct  = 100 - ceVolPct;
+  var ceCOIPct  = Math.round((Math.abs(totalCEC) / coiTotal) * 100);
+  var peCOIPct  = 100 - ceCOIPct;
+  var volDiff   = totalPEV - totalCEV;
+  var coiDiff   = totalPEC - totalCEC;
+  var sCol      = sentiment === 'Bullish' ? '#4ade80' : sentiment === 'Bearish' ? '#f87171' : '#f59e0b';
+  var volDiffCol = volDiff > 0 ? '#4ade80' : volDiff < 0 ? '#f87171' : '#64748b';
+  var coiDiffCol = coiDiff > 0 ? '#4ade80' : coiDiff < 0 ? '#f87171' : '#64748b';
 
   function Section(p) {
     return (
       <div style={{ background: '#1e293b', borderRadius: 8, padding: '10px 14px',
                     border: '1px solid #334155', flex: 1, minWidth: 160 }}>
         <p style={{ fontSize: 9, color: '#475569', margin: '0 0 8px', fontWeight: 700,
-                    textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          {p.title}
-        </p>
+                    textTransform: 'uppercase', letterSpacing: '0.06em' }}>{p.title}</p>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
           <div>
             <p style={{ fontSize: 9, color: '#f87171', margin: '0 0 2px', fontWeight: 600 }}>CE</p>
             <span style={{ fontSize: 15, fontWeight: 800, color: '#f87171' }}>{fmt(p.ce)}</span>
           </div>
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 600 }}>
-              DIFF (PE−CE)
-            </p>
-            <span style={{ fontSize: 13, fontWeight: 800, color: p.diffCol }}>
-              {p.diff > 0 ? '+' : ''}{fmt(p.diff)}
-            </span>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 600 }}>DIFF (PE−CE)</p>
+            <span style={{ fontSize: 13, fontWeight: 800, color: p.diffCol }}>{p.diff > 0 ? '+' : ''}{fmt(p.diff)}</span>
             <p style={{ fontSize: 9, margin: '2px 0 0', color: p.diffCol, fontWeight: 600 }}>
               {p.diff > 0 ? '↑ PE Dom' : p.diff < 0 ? '↓ CE Dom' : 'Balanced'}
             </p>
@@ -140,10 +125,8 @@ function OIBar(props) {
           <div style={{ width: p.cePct + '%', background: '#dc2626', transition: 'width 0.4s' }} />
           <div style={{ width: p.pePct + '%', background: '#16a34a', transition: 'width 0.4s' }} />
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3,
-                      fontSize: 9, color: '#475569' }}>
-          <span>CE {p.cePct}%</span>
-          <span>PE {p.pePct}%</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: '#475569' }}>
+          <span>CE {p.cePct}%</span><span>PE {p.pePct}%</span>
         </div>
       </div>
     );
@@ -152,64 +135,32 @@ function OIBar(props) {
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10,
                   padding: '12px 16px', marginBottom: 10 }}>
-
-      {/* ── PCR + Sentiment header ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12,
-                    flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
         <div>
           <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700,
                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>PCR (OI)</p>
           <span style={{ fontSize: 22, fontWeight: 800, color: sCol }}>{pcr}</span>
         </div>
-        <div style={{ padding: '4px 12px', borderRadius: 20, background: sCol + '20',
-                      border: '1px solid ' + sCol + '44' }}>
+        <div style={{ padding: '4px 12px', borderRadius: 20, background: sCol + '20', border: '1px solid ' + sCol + '44' }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: sCol }}>{sentiment}</span>
         </div>
         <p style={{ fontSize: 11, color: '#475569', margin: 0 }}>
-          {sentiment === 'Bullish'
-            ? 'More PE OI — put writers building support below spot'
-            : sentiment === 'Bearish'
-            ? 'More CE OI — call writers building resistance above spot'
+          {sentiment === 'Bullish' ? 'More PE OI — put writers building support below spot'
+            : sentiment === 'Bearish' ? 'More CE OI — call writers building resistance above spot'
             : 'Balanced OI — no strong directional bias'}
         </p>
       </div>
-
-      {/* ── Three sections ── */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-
-        <Section
-          title="Open Interest (OI)"
-          ce={totalCE}   pe={totalPE}
-          diff={totalPE - totalCE}
-          diffCol={totalPE > totalCE ? '#4ade80' : '#f87171'}
-          cePct={cePct}  pePct={pePct}
-        />
-
-        <Section
-          title="Volume (Today)"
-          ce={totalCEV}  pe={totalPEV}
-          diff={volDiff}
-          diffCol={volDiffCol}
-          cePct={ceVolPct} pePct={peVolPct}
-        />
-
-        <Section
-          title="Change in OI (COI)"
-          ce={totalCEC}  pe={totalPEC}
-          diff={coiDiff}
-          diffCol={coiDiffCol}
-          cePct={ceCOIPct} pePct={peCOIPct}
-        />
-
+        <Section title="Open Interest (OI)"  ce={totalCE}  pe={totalPE}  diff={totalPE - totalCE} diffCol={totalPE > totalCE ? '#4ade80' : '#f87171'} cePct={cePct}    pePct={pePct}    />
+        <Section title="Volume (Today)"      ce={totalCEV} pe={totalPEV} diff={volDiff}            diffCol={volDiffCol}                                cePct={ceVolPct} pePct={peVolPct} />
+        <Section title="Change in OI (COI)"  ce={totalCEC} pe={totalPEC} diff={coiDiff}            diffCol={coiDiffCol}                                cePct={ceCOIPct} pePct={peCOIPct} />
       </div>
     </div>
   );
 }
-// ─── Support / Resistance bar ─────────────────────────────────────────────────
 
 function SupportResistanceBar(props) {
   var d = props.data || {};
-
   function Level(p) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0 }}>
@@ -220,9 +171,7 @@ function SupportResistanceBar(props) {
       </div>
     );
   }
-
   if (!d.support && !d.resistance) return null;
-
   return (
     <div style={{ padding: '10px 16px', background: '#0f172a', border: '1px solid #1e293b',
                   borderRadius: 10, marginBottom: 10 }}>
@@ -256,8 +205,7 @@ function SupportResistanceBar(props) {
                              background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>MAX PAIN</span>
               <span style={{ fontSize: 14, fontWeight: 800, color: '#f59e0b' }}>{d.max_pain}</span>
               {d.max_pain_distance !== undefined && (
-                <span style={{ fontSize: 9, fontWeight: 600,
-                               color: d.max_pain_distance > 0 ? '#f87171' : '#4ade80' }}>
+                <span style={{ fontSize: 9, fontWeight: 600, color: d.max_pain_distance > 0 ? '#f87171' : '#4ade80' }}>
                   {d.max_pain_distance > 0 ? '▲' : '▼'} {Math.abs(d.max_pain_distance)}pts
                 </span>
               )}
@@ -268,8 +216,6 @@ function SupportResistanceBar(props) {
     </div>
   );
 }
-
-// ─── IV compact ───────────────────────────────────────────────────────────────
 
 function IVCompact(props) {
   var history = props.history || [];
@@ -289,8 +235,6 @@ function IVCompact(props) {
     </div>
   );
 }
-
-// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function OptionChain() {
   var { user }  = useAuth();
@@ -355,14 +299,11 @@ export default function OptionChain() {
   }
 
   var chain     = data ? (data.chain || []) : [];
-  var atmStrike = data ? data.atm_strike  : null;
+  var atmStrike = data ? data.atm_strike : null;
   var ivHistory = data ? (data.iv_history || []) : [];
 
-  // ── Filter chain rows ──────────────────────────────────────────────────────
   var filtered = chain.filter(function(row) {
-    // Search by strike number
     if (search && !String(row.strike).includes(search)) return false;
-
     if (filter === 'near') {
       var atmIdx = chain.findIndex(function(r) { return r.strike === atmStrike; });
       var rowIdx = chain.findIndex(function(r) { return r.strike === row.strike; });
@@ -370,10 +311,9 @@ export default function OptionChain() {
     }
     if (filter === 'calls') return row.ce_oi > 0;
     if (filter === 'puts')  return row.pe_oi > 0;
-    return true; // 'all'
+    return true;
   });
 
-  // OI bar for current row (relative to max)
   var maxCEOI = Math.max.apply(null, chain.map(function(r) { return r.ce_oi; }).concat([1]));
   var maxPEOI = Math.max.apply(null, chain.map(function(r) { return r.pe_oi; }).concat([1]));
 
@@ -381,13 +321,10 @@ export default function OptionChain() {
     <div style={{ color: '#f1f5f9' }}>
       <PageTitle title="Option Chain" />
 
-      {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 4px', color: '#f1f5f9' }}>
-            Option Chain
-          </h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 4px', color: '#f1f5f9' }}>Option Chain</h1>
           <p style={{ color: '#64748b', margin: 0, fontSize: 13 }}>
             Full chain · {data ? data.total_strikes || chain.length : '—'} strikes · every 3 min
           </p>
@@ -405,15 +342,13 @@ export default function OptionChain() {
           <button
             onClick={function() { navigate('/options'); }}
             style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
-                     padding: '6px 14px', color: '#94a3b8', fontSize: 12, fontWeight: 600,
-                     cursor: 'pointer' }}
+                     padding: '6px 14px', color: '#94a3b8', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
           >
             ← Analysis
           </button>
         </div>
       </div>
 
-      {/* ── Symbol tabs ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {SYMBOLS.map(function(s) {
           return (
@@ -436,18 +371,13 @@ export default function OptionChain() {
 
       {data && (
         <>
-          {/* ── Meta row ── */}
           <div style={{ display: 'flex', gap: 16, alignItems: 'center', padding: '8px 16px',
                         background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10,
                         marginBottom: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 17, fontWeight: 800, color: '#f1f5f9' }}>{data.symbol}</span>
             <span style={{ fontSize: 17, fontWeight: 700, color: '#60a5fa' }}>{data.spot_price}</span>
-            <span style={{ fontSize: 12, color: '#64748b' }}>
-              Expiry: <b style={{ color: '#f1f5f9' }}>{data.expiry}</b>
-            </span>
-            <span style={{ fontSize: 12, color: '#64748b' }}>
-              ATM: <b style={{ color: '#60a5fa' }}>{atmStrike}</b>
-            </span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>Expiry: <b style={{ color: '#f1f5f9' }}>{data.expiry}</b></span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>ATM: <b style={{ color: '#60a5fa' }}>{atmStrike}</b></span>
             <span style={{ fontSize: 12, color: '#64748b' }}>
               PCR: <b style={{ color: data.pcr_total > 1.2 ? '#4ade80' : data.pcr_total < 0.8 ? '#f87171' : '#f59e0b' }}>
                 {data.pcr_total}
@@ -458,16 +388,11 @@ export default function OptionChain() {
             </span>
             <span style={{ fontSize: 11, color: '#334155', marginLeft: 'auto' }}>⏱ {data.timestamp}</span>
           </div>
-
-          {/* ── OI Summary bar ── */}
           <OIBar data={data} />
-
-          {/* ── S/R bar ── */}
           <SupportResistanceBar data={data} />
         </>
       )}
 
-      {/* ── Filter bar ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         {FILTERS.map(function(f) {
           return (
@@ -478,7 +403,7 @@ export default function OptionChain() {
                 border: '1px solid #334155', borderRadius: 6, padding: '5px 14px',
                 cursor: 'pointer', fontSize: 12, fontWeight: 600,
                 background: filter === f.id ? '#1e40af' : '#1e293b',
-                color:      filter === f.id ? '#93c5fd'  : '#64748b',
+                color:      filter === f.id ? '#93c5fd' : '#64748b',
               }}
             >
               {f.label}
@@ -492,8 +417,7 @@ export default function OptionChain() {
           onChange={function(e) { setSearch(e.target.value); setFilter('all'); }}
           style={{
             background: '#1e293b', border: '1px solid #334155', borderRadius: 6,
-            padding: '5px 12px', color: '#f1f5f9', fontSize: 12, outline: 'none',
-            width: 140,
+            padding: '5px 12px', color: '#f1f5f9', fontSize: 12, outline: 'none', width: 140,
           }}
         />
         {data && (
@@ -513,28 +437,36 @@ export default function OptionChain() {
       )}
 
       {data && !data.error && filtered.length > 0 && (
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
-                      overflow: 'hidden' }}>
+        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            {/* FIX: width max-content prevents column squishing */}
+            <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: '#1e293b' }}>
-                  <th colSpan={filter === 'puts' ? 0 : 7}
-                      style={{ padding: '7px', color: '#f87171', textAlign: 'center',
-                               fontWeight: 700, borderRight: filter === 'puts' ? 'none' : '2px solid #334155',
-                               display: filter === 'puts' ? 'none' : '' }}>
-                    CALLS
-                  </th>
+                  {filter !== 'puts' && (
+                    <th colSpan={7} style={{ padding: '7px', color: '#f87171', textAlign: 'center',
+                                 fontWeight: 700, borderRight: '2px solid #334155' }}>
+                      CALLS
+                    </th>
+                  )}
+                  {/* FIX: Strike — fixed 90px */}
                   <th style={{ padding: '7px 14px', color: '#f1f5f9', textAlign: 'center',
-                               fontWeight: 800, background: '#0f172a', fontSize: 13 }}>
+                               fontWeight: 800, background: '#0f172a', fontSize: 13,
+                               minWidth: 90, width: 90 }}>
                     Strike
                   </th>
-                  <th colSpan={filter === 'calls' ? 0 : 7}
-                      style={{ padding: '7px', color: '#4ade80', textAlign: 'center',
-                               fontWeight: 700, borderLeft: filter === 'calls' ? 'none' : '2px solid #334155',
-                               display: filter === 'calls' ? 'none' : '' }}>
-                    PUTS
+                  {/* FIX: Vol Bias — fixed 80px */}
+                  <th style={{ padding: '7px 10px', color: '#94a3b8', textAlign: 'center',
+                               fontWeight: 700, fontSize: 10, background: '#0f172a',
+                               whiteSpace: 'nowrap', minWidth: 80, width: 80 }}>
+                    Vol Bias
                   </th>
+                  {filter !== 'calls' && (
+                    <th colSpan={7} style={{ padding: '7px', color: '#4ade80', textAlign: 'center',
+                                 fontWeight: 700, borderLeft: '2px solid #334155' }}>
+                      PUTS
+                    </th>
+                  )}
                 </tr>
                 <tr style={{ background: '#162032' }}>
                   {filter !== 'puts' && <>
@@ -546,10 +478,10 @@ export default function OptionChain() {
                     <th style={{ padding: '5px 10px', color: '#f87171', textAlign: 'right',  fontWeight: 600, fontSize: 10, borderRight: '2px solid #334155' }}>LTP</th>
                     <th style={{ padding: '5px 8px',  color: '#64748b', textAlign: 'right',  fontWeight: 600, fontSize: 10, borderRight: '2px solid #334155', width: 60 }}>OI Bar</th>
                   </>}
-                  <th style={{ padding: '5px 10px', color: '#94a3b8', textAlign: 'center',
-                               fontWeight: 700, fontSize: 10, background: '#0f172a', whiteSpace: 'nowrap' }}>
-                    Vol Bias
-                  </th>
+                  {/* sub-header placeholders to keep column alignment */}
+                  <th style={{ padding: '5px 14px', background: '#0f172a', minWidth: 90, width: 90 }} />
+                  <th style={{ padding: '5px 10px', background: '#0f172a', minWidth: 80, width: 80,
+                               fontSize: 9, color: '#334155', textAlign: 'center' }}>PE−CE Vol</th>
                   {filter !== 'calls' && <>
                     <th style={{ padding: '5px 8px',  color: '#64748b', textAlign: 'left',   fontWeight: 600, fontSize: 10, borderLeft: '2px solid #334155', width: 60 }}>OI Bar</th>
                     <th style={{ padding: '5px 10px', color: '#4ade80', textAlign: 'left',   fontWeight: 600, fontSize: 10, borderLeft: '2px solid #334155' }}>LTP</th>
@@ -589,10 +521,22 @@ export default function OptionChain() {
                   var cePct = maxCEOI > 0 ? Math.round((row.ce_oi / maxCEOI) * 100) : 0;
                   var pePct = maxPEOI > 0 ? Math.round((row.pe_oi / maxPEOI) * 100) : 0;
 
+                  var diff     = (row.pe_vol || 0) - (row.ce_vol || 0);
+                  var absDiff  = Math.abs(diff);
+                  var total    = (row.pe_vol || 0) + (row.ce_vol || 0);
+                  var domPct   = total > 0 ? Math.round((absDiff / total) * 100) : 0;
+                  var isBal    = total === 0 || domPct < 10;
+                  var isPEDom  = diff > 0;
+                  var volCol   = isBal ? '#64748b' : isPEDom ? '#4ade80' : '#f87171';
+                  var volLabel = isBal ? 'Balanced' : isPEDom ? 'PE Dom' : 'CE Dom';
+                  var diffFmt  = absDiff >= 100000 ? (diff / 100000).toFixed(1) + 'L'
+                               : absDiff >= 1000   ? (diff / 1000).toFixed(0) + 'K'
+                               : String(diff);
+
                   return (
                     <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
 
-                      {/* ── CALLS ── */}
+                      {/* CALLS */}
                       {filter !== 'puts' && <>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                           <BuildupBadge signal={row.ce_signal} side="CE" />
@@ -600,8 +544,7 @@ export default function OptionChain() {
                         <td style={{ padding: '6px 10px', textAlign: 'right', color: '#f87171' }}>
                           {fmt(row.ce_oi)}
                         </td>
-                        <td style={{ padding: '6px 10px', textAlign: 'right',
-                                     color: chgCol(row.ce_chg_oi), fontWeight: 600 }}>
+                        <td style={{ padding: '6px 10px', textAlign: 'right', color: chgCol(row.ce_chg_oi), fontWeight: 600 }}>
                           {fmtChg(row.ce_chg_oi)}
                         </td>
                         <td style={{ padding: '6px 10px', textAlign: 'right', color: '#94a3b8' }}>
@@ -623,10 +566,10 @@ export default function OptionChain() {
                         </td>
                       </>}
 
-                      {/* ── STRIKE ── */}
+                      {/* FIX: Strike — fixed 90px */}
                       <td style={{ padding: '6px 14px', textAlign: 'center', fontWeight: 800,
                                    fontSize: 13, color: strikeCol, background: '#0f172a',
-                                   whiteSpace: 'nowrap', minWidth: 72 }}>
+                                   whiteSpace: 'nowrap', minWidth: 90, width: 90 }}>
                         {row.strike}
                         {strikeLabel && (
                           <span style={{ display: 'block', fontSize: 8, color: strikeCol,
@@ -636,34 +579,19 @@ export default function OptionChain() {
                         )}
                       </td>
 
-                      {/* ── VOL BIAS ── */}
-                      {(function() {
-                        var diff     = (row.pe_vol || 0) - (row.ce_vol || 0);
-                        var absDiff  = Math.abs(diff);
-                        var total    = (row.pe_vol || 0) + (row.ce_vol || 0);
-                        var domPct   = total > 0 ? Math.round((absDiff / total) * 100) : 0;
-                        var isPEDom  = diff > 0;
-                        var isBal    = total === 0 || domPct < 10;
-                        var col      = isBal ? '#64748b' : isPEDom ? '#4ade80' : '#f87171';
-                        var label    = isBal ? 'Balanced' : isPEDom ? 'PE Dom' : 'CE Dom';
-                        var diffFmt  = absDiff >= 100000 ? (diff / 100000).toFixed(1) + 'L'
-                                     : absDiff >= 1000   ? (diff / 1000).toFixed(0) + 'K'
-                                     : String(diff);
-                        return (
-                          <td style={{ padding: '6px 8px', textAlign: 'center',
-                                       background: '#0f172a', minWidth: 64 }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: col }}>
-                              {isBal ? '—' : (diff > 0 ? '+' : '') + diffFmt}
-                            </span>
-                            <span style={{ display: 'block', fontSize: 8, fontWeight: 600,
-                                           color: col, marginTop: 1 }}>
-                              {label}
-                            </span>
-                          </td>
-                        );
-                      })()}
+                      {/* FIX: Vol Bias — fixed 80px, no IIFE */}
+                      <td style={{ padding: '6px 8px', textAlign: 'center',
+                                   background: '#0f172a', minWidth: 80, width: 80 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: volCol }}>
+                          {isBal ? '—' : (diff > 0 ? '+' : '') + diffFmt}
+                        </span>
+                        <span style={{ display: 'block', fontSize: 8, fontWeight: 600,
+                                       color: volCol, marginTop: 1 }}>
+                          {volLabel}
+                        </span>
+                      </td>
 
-                      {/* ── PUTS ── */}
+                      {/* PUTS */}
                       {filter !== 'calls' && <>
                         <td style={{ padding: '6px 8px', borderLeft: '2px solid #334155', width: 64 }}>
                           <div style={{ width: pePct + '%', maxWidth: 56, height: 6,
@@ -680,8 +608,7 @@ export default function OptionChain() {
                         <td style={{ padding: '6px 10px', textAlign: 'left', color: '#94a3b8' }}>
                           {fmt(row.pe_vol)}
                         </td>
-                        <td style={{ padding: '6px 10px', textAlign: 'left',
-                                     color: chgCol(row.pe_chg_oi), fontWeight: 600 }}>
+                        <td style={{ padding: '6px 10px', textAlign: 'left', color: chgCol(row.pe_chg_oi), fontWeight: 600 }}>
                           {fmtChg(row.pe_chg_oi)}
                         </td>
                         <td style={{ padding: '6px 10px', textAlign: 'left', color: '#4ade80' }}>
@@ -699,7 +626,6 @@ export default function OptionChain() {
             </table>
           </div>
 
-          {/* ── Legend ── */}
           <div style={{ padding: '10px 16px', borderTop: '1px solid #1e293b',
                         display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: '#475569' }}>
             <span style={{ color: '#94a3b8', fontWeight: 700 }}>CALLS:</span>
@@ -712,7 +638,7 @@ export default function OptionChain() {
             <span><span style={{ color: '#4ade80', fontWeight: 700 }}>SB</span> Writing·Bullish</span>
             <span><span style={{ color: '#f87171', fontWeight: 700 }}>LB</span> Buying·Bearish</span>
             <span style={{ marginLeft: 'auto', color: '#334155' }}>
-              Signals appear after 2nd refresh · OI bars relative to max strike OI
+              Signals appear after 2nd refresh · OI bars relative to max strike OI · Vol Bias = PE Vol − CE Vol
             </span>
           </div>
         </div>
