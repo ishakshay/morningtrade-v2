@@ -911,6 +911,151 @@ function IVDashboard(props) {
         </div>
       )}
 
+      {/* IV Conviction Signal — 4-snapshot scoring */}
+      {(function() {
+        if (history.length < 4) return null;
+
+        var last4       = history.slice(-4);
+        var bullScore   = 0;
+        var bearScore   = 0;
+        var snapDetails = [];
+
+        for (var i = 1; i < last4.length; i++) {
+          var cur  = last4[i];
+          var prv  = last4[i - 1];
+
+          var spotCur   = cur.spot  || 0;
+          var spotPrv   = prv.spot  || 0;
+          var ceIvCur   = cur.ce_iv || 0;
+          var ceIvPrv   = prv.ce_iv || 0;
+          var peIvCur   = cur.pe_iv || 0;
+          var peIvPrv   = prv.pe_iv || 0;
+
+          var priceUp   = spotCur > spotPrv;
+          var priceDown = spotCur < spotPrv;
+          var ceIvUp    = ceIvCur > ceIvPrv;
+          var peIvUp    = peIvCur > peIvPrv;
+
+          var snapBull  = 0;
+          var snapBear  = 0;
+
+          if (priceUp   && ceIvUp)  snapBull += 1;  // call buyers active
+          if (priceUp   && !peIvUp) snapBull += 1;  // puts abandoned
+          if (priceDown && peIvUp)  snapBear += 1;  // put buyers active
+          if (priceDown && !ceIvUp) snapBear += 1;  // calls abandoned
+
+          bullScore += snapBull;
+          bearScore += snapBear;
+
+          snapDetails.push({
+            time:      cur.time,
+            priceUp:   priceUp,
+            priceDown: priceDown,
+            ceIvUp:    ceIvUp,
+            peIvUp:    peIvUp,
+            bull:      snapBull,
+            bear:      snapBear,
+            spot:      spotCur,
+            ceIv:      ceIvCur,
+            peIv:      peIvCur,
+          });
+        }
+
+        // max = 3 transitions × 2 conditions = 6
+        var maxScore = 6;
+        var signal, color, bg, border, title, body;
+
+        if (bullScore >= 5) {
+          signal = 'STRONG BREAKOUT';
+          color = '#4ade80'; bg = 'rgba(74,222,128,0.08)'; border = '#4ade8033';
+          title = 'Strong breakout conviction — ' + bullScore + '/' + maxScore;
+          body  = 'Price rising with CE IV expanding and PE IV contracting across ' + bullScore + ' of ' + maxScore + ' checks. Call buyers aggressive, put writers relaxed. High probability resistance breaks.';
+        } else if (bullScore >= 3) {
+          signal = 'MODERATE BREAKOUT';
+          color = '#86efac'; bg = 'rgba(134,239,172,0.08)'; border = '#86efac33';
+          title = 'Moderate breakout conviction — ' + bullScore + '/' + maxScore;
+          body  = 'Price moving up with mixed IV confirmation. ' + bullScore + '/' + maxScore + ' checks bullish. Resistance may be tested but not fully confirmed — watch for CE IV to sustain above PE IV.';
+        } else if (bearScore >= 5) {
+          signal = 'STRONG BREAKDOWN';
+          color = '#f87171'; bg = 'rgba(248,113,113,0.08)'; border = '#f8717133';
+          title = 'Strong breakdown conviction — ' + bearScore + '/' + maxScore;
+          body  = 'Price falling with PE IV expanding and CE IV contracting across ' + bearScore + ' of ' + maxScore + ' checks. Put buyers aggressive, call writers relaxed. High probability support breaks.';
+        } else if (bearScore >= 3) {
+          signal = 'MODERATE BREAKDOWN';
+          color = '#fca5a5'; bg = 'rgba(252,165,165,0.08)'; border = '#fca5a533';
+          title = 'Moderate breakdown conviction — ' + bearScore + '/' + maxScore;
+          body  = 'Price moving down with mixed IV confirmation. ' + bearScore + '/' + maxScore + ' checks bearish. Support may be tested but not fully confirmed — watch for PE IV to sustain expansion.';
+        } else if (bullScore > 0 && bullScore === bearScore) {
+          signal = 'CONFLICTED';
+          color = '#f59e0b'; bg = 'rgba(245,158,11,0.08)'; border = '#f59e0b33';
+          title = 'Conflicted IV signals — ' + bullScore + ' bull / ' + bearScore + ' bear';
+          body  = 'IV signals are mixed — neither side showing sustained conviction. Avoid directional bets until IV aligns with price direction.';
+        } else {
+          signal = 'LOW CONVICTION';
+          color = '#64748b'; bg = 'rgba(100,116,139,0.06)'; border = '#64748b33';
+          title = 'Low IV conviction — bull ' + bullScore + ' · bear ' + bearScore + ' (of ' + maxScore + ')';
+          body  = 'IV not confirming price direction. Price may be flat or IV moving independently of price. No strong breakout or breakdown signal.';
+        }
+
+        return (
+          <div style={{ padding: '14px 20px', borderTop: '1px solid #1e293b' }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 10px',
+                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              IV Conviction Signal — last 4 snapshots
+            </p>
+
+            {/* Main signal card */}
+            <div style={{ background: bg, border: '1px solid ' + border, borderLeft: '3px solid ' + color,
+                          borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: color }}>{signal}</span>
+                <div style={{ flex: 1, height: 5, background: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: (Math.max(bullScore, bearScore) / maxScore * 100) + '%',
+                                height: '100%', background: color, borderRadius: 3, transition: 'width 0.4s' }} />
+                </div>
+                <span style={{ fontSize: 11, color: color, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                  {Math.max(bullScore, bearScore)}/{maxScore}
+                </span>
+              </div>
+              <p style={{ fontSize: 11, fontWeight: 700, color: color, margin: '0 0 4px' }}>{title}</p>
+              <p style={{ fontSize: 11, color: '#94a3b8', margin: 0, lineHeight: 1.6 }}>{body}</p>
+            </div>
+
+            {/* Per-snapshot breakdown */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {snapDetails.map(function(s, i) {
+                var priceCol   = s.priceUp ? '#4ade80' : s.priceDown ? '#f87171' : '#64748b';
+                var priceArrow = s.priceUp ? '↑' : s.priceDown ? '↓' : '→';
+                var ceCol      = s.ceIvUp ? '#f87171' : '#4ade80';
+                var peCol      = s.peIvUp ? '#f87171' : '#4ade80';
+                var scoreBg    = s.bull > 0 ? 'rgba(74,222,128,0.1)' : s.bear > 0 ? 'rgba(248,113,113,0.1)' : '#1e293b';
+                return (
+                  <div key={i} style={{ background: scoreBg, borderRadius: 8, padding: '8px 12px',
+                                        border: '1px solid #334155', minWidth: 80, flex: 1 }}>
+                    <p style={{ fontSize: 9, color: '#475569', margin: '0 0 5px', fontWeight: 700 }}>{s.time}</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <span style={{ fontSize: 10, color: priceCol, fontWeight: 700 }}>
+                        {priceArrow} {s.spot ? s.spot.toFixed(0) : '—'}
+                      </span>
+                      <span style={{ fontSize: 9, color: ceCol }}>CE IV {s.ceIvUp ? '↑' : '↓'} {s.ceIv.toFixed(1)}%</span>
+                      <span style={{ fontSize: 9, color: peCol }}>PE IV {s.peIvUp ? '↑' : '↓'} {s.peIv.toFixed(1)}%</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, marginTop: 2,
+                                     color: s.bull > 0 ? '#4ade80' : s.bear > 0 ? '#f87171' : '#64748b' }}>
+                        {s.bull > 0 ? '+' + s.bull + ' bull' : s.bear > 0 ? '+' + s.bear + ' bear' : 'neutral'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p style={{ fontSize: 9, color: '#334155', margin: '10px 0 0' }}>
+              Price↑ + CE IV↑ = +1 bull · Price↑ + PE IV↓ = +1 bull · Price↓ + PE IV↑ = +1 bear · Price↓ + CE IV↓ = +1 bear · Max 6pts · Strong ≥5 · Moderate ≥3
+            </p>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
