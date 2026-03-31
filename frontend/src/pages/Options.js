@@ -910,6 +910,7 @@ function IVDashboard(props) {
                   <th style={{ padding: '6px 12px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>CE IV</th>
                   <th style={{ padding: '6px 12px', color: '#4ade80', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>PE IV</th>
                   <th style={{ padding: '6px 12px', color: '#94a3b8', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>Signal</th>
+                  <th style={{ padding: '6px 12px', color: '#94a3b8', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>Action · Reason</th>
                 </tr>
               </thead>
               <tbody>
@@ -940,16 +941,17 @@ function IVDashboard(props) {
                   var peArrow    = peUp    ? '↑' : peDn    ? '↓' : '';
 
                   var signal = null; var signalColor = '#64748b';
+                  var action = null; var reason = null;
                   if (prev) {
-                    if      (priceUp && ceUp  && peDn) { signal = 'BREAKOUT';      signalColor = '#4ade80'; }
-                    else if (priceUp && ceUp  && peUp) { signal = 'CAUTIOUS RALLY'; signalColor = '#f59e0b'; }
-                    else if (priceUp && ceDn  && peDn) { signal = 'WEAK RALLY';    signalColor = '#64748b'; }
-                    else if (priceUp && ceDn  && peUp) { signal = 'TRAP RALLY';    signalColor = '#f87171'; }
-                    else if (priceDn && peUp  && ceDn) { signal = 'BREAKDOWN';     signalColor = '#f87171'; }
-                    else if (priceDn && peUp  && ceUp) { signal = 'CAUTIOUS FALL'; signalColor = '#f59e0b'; }
-                    else if (priceDn && peDn  && ceDn) { signal = 'WEAK SELLING';  signalColor = '#64748b'; }
-                    else if (priceDn && peDn  && ceUp) { signal = 'TRAP FALL';     signalColor = '#4ade80'; }
-                    else if (!priceUp && !priceDn)      { signal = 'FLAT';         signalColor = '#475569'; }
+                    if      (priceUp && ceUp  && peDn) { signal = 'BREAKOUT';      signalColor = '#4ade80'; action = 'Trade the move';      reason = 'Calls bought + puts abandoned — both sides confirm direction'; }
+                    else if (priceUp && ceUp  && peUp) { signal = 'CAUTIOUS RALLY'; signalColor = '#f59e0b'; action = 'Reduce size';        reason = 'Someone hedging upside — conviction is split, do not go all in'; }
+                    else if (priceUp && ceDn  && peDn) { signal = 'WEAK RALLY';    signalColor = '#64748b'; action = 'Wait';               reason = 'IV falling everywhere — no conviction, move likely fades'; }
+                    else if (priceUp && ceDn  && peUp) { signal = 'TRAP RALLY';    signalColor = '#f87171'; action = 'Fade / Protect longs'; reason = 'Puts quietly accumulating — bears disagree with the rally'; }
+                    else if (priceDn && peUp  && ceDn) { signal = 'BREAKDOWN';     signalColor = '#f87171'; action = 'Trade the move';      reason = 'Puts bought + calls abandoned — both sides confirm direction'; }
+                    else if (priceDn && peUp  && ceUp) { signal = 'CAUTIOUS FALL'; signalColor = '#f59e0b'; action = 'Reduce size';        reason = 'Calls being bought into the fall — bounce likely nearby'; }
+                    else if (priceDn && peDn  && ceDn) { signal = 'WEAK SELLING';  signalColor = '#64748b'; action = 'Wait';               reason = 'No fear despite price falling — support likely holds'; }
+                    else if (priceDn && peDn  && ceUp) { signal = 'TRAP FALL';     signalColor = '#4ade80'; action = 'Fade / Protect shorts'; reason = 'Calls quietly accumulating — bulls disagree with the fall'; }
+                    else if (!priceUp && !priceDn)      { signal = 'FLAT';         signalColor = '#475569'; action = 'Wait';               reason = 'Price not moving — no directional edge'; }
                   }
 
                   return (
@@ -983,6 +985,19 @@ function IVDashboard(props) {
                             {signal}
                           </span>
                         ) : <span style={{ fontSize: 10, color: '#334155' }}>—</span>}
+                      </td>
+                      <td style={{ padding: '7px 14px', minWidth: 260 }}>
+                        {action && (
+                          <div>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: signalColor, whiteSpace: 'nowrap' }}>
+                              {action}
+                            </span>
+                            <span style={{ fontSize: 10, color: '#475569', marginLeft: 6 }}>
+                              {reason}
+                            </span>
+                          </div>
+                        )}
+                        {!action && <span style={{ fontSize: 10, color: '#334155' }}>—</span>}
                       </td>
                     </tr>
                   );
