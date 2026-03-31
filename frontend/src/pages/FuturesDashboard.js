@@ -167,6 +167,10 @@ function IntradayTable(props) {
                 <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Put − Call</span>
               </th>
               <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>PCR</th>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>
+                PCR (COI)
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Full Chain</span>
+              </th>
               <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600,
                            borderLeft: '1px solid #334155' }}>Option Signal</th>
               <th style={{ padding: '8px 14px', color: '#60a5fa', textAlign: 'right',  fontWeight: 600,
@@ -184,6 +188,11 @@ function IntradayTable(props) {
               var pcrDown  = prev && snap.pcr < prev.pcr;
               var pcrArrow = pcrUp ? ' ↑' : pcrDown ? ' ↓' : '';
               var pcrCol   = snap.pcr > 1.2 ? '#4ade80' : snap.pcr < 0.8 ? '#f87171' : '#f59e0b';
+              var coiPcr     = snap.pcr_coi || 0;
+              var coiPcrCol  = coiPcr > 1.2 ? '#4ade80' : coiPcr > 0 && coiPcr < 0.8 ? '#f87171' : '#f59e0b';
+              var coiPcrUp   = prev && coiPcr > (prev.pcr_coi || 0);
+              var coiPcrDown = prev && coiPcr < (prev.pcr_coi || 0);
+              var coiArrow   = coiPcrUp ? ' ↑' : coiPcrDown ? ' ↓' : '';
               var diffCol  = diffVal > 0 ? '#4ade80' : diffVal < 0 ? '#f87171' : '#64748b';
               var priceCol = snap.price > snap.vwap ? '#4ade80' : snap.price < snap.vwap ? '#f87171' : '#f1f5f9';
 
@@ -211,6 +220,12 @@ function IntradayTable(props) {
                     {snap.pcr}
                     <span style={{ fontSize: 10, color: pcrUp ? '#4ade80' : pcrDown ? '#f87171' : '#64748b' }}>
                       {pcrArrow}
+                    </span>
+                  </td>
+                  <td style={{ padding: '9px 14px', textAlign: 'center', color: coiPcrCol, fontWeight: 700 }}>
+                    {coiPcr > 0 ? coiPcr.toFixed(2) : '—'}
+                    <span style={{ fontSize: 10, color: coiPcrUp ? '#4ade80' : coiPcrDown ? '#f87171' : '#64748b' }}>
+                      {coiArrow}
                     </span>
                   </td>
                   <td style={{ padding: '9px 14px', textAlign: 'center', borderLeft: '1px solid #1e293b' }}>
