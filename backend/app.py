@@ -104,7 +104,7 @@ def refresh_futures_dashboard():
                 fetch_futures_dashboard(symbol, options_data)
             except Exception as e:
                 print(f"  [futures_dashboard] {symbol} failed: {e}")
-        time.sleep(60)
+        time.sleep(180)
 
 def refresh_market_overview():
     while True:

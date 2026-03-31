@@ -401,7 +401,7 @@ export default function FuturesDashboard() {
     setData(null);
     fetchData(symbol);
     clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(function() { fetchData(symbol); }, 60000);
+    intervalRef.current = setInterval(function() { fetchData(symbol); }, 180000);
     return function() { clearInterval(intervalRef.current); };
   }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
