@@ -127,7 +127,7 @@ def fetch_futures_data(symbol):
                 turnover = safe_float(fut_contract.get('totalTurnover', 0))
                 fut_chg  = safe_float(fut_contract.get('change',  fut_chg))
                 fut_pct  = safe_float(fut_contract.get('pchange', fut_pct))
-                lot_size = 65 if symbol == 'NIFTY' else 35
+                lot_size = 65 if symbol == 'NIFTY' else 30
                 if fut_vol > 0 and turnover > 0:
                     fut_vwap = round(turnover / (fut_vol * lot_size), 2)
         except Exception as e:
