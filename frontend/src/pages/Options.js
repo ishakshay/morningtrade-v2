@@ -894,6 +894,108 @@ function IVDashboard(props) {
         </div>
       )}
 
+      {/* IV Snapshot History — last 12 readings */}
+      {history.length >= 2 && (
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 10px',
+                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            IV History — last {Math.min(history.length, 12)} readings · newest first · every 3 min
+          </p>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
+              <thead>
+                <tr style={{ background: '#162032' }}>
+                  <th style={{ padding: '6px 12px', color: '#64748b', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>Time</th>
+                  <th style={{ padding: '6px 12px', color: '#60a5fa', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>Price</th>
+                  <th style={{ padding: '6px 12px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>CE IV</th>
+                  <th style={{ padding: '6px 12px', color: '#4ade80', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>PE IV</th>
+                  <th style={{ padding: '6px 12px', color: '#94a3b8', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>Signal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.slice(-12).reverse().map(function(snap, i, arr) {
+                  var prev      = arr[i + 1];
+                  var isLatest  = i === 0;
+
+                  var spotNow  = snap.spot  || 0;
+                  var spotPrev = prev ? (prev.spot  || 0) : 0;
+                  var ceNow    = snap.ce_iv || 0;
+                  var cePrev   = prev ? (prev.ce_iv || 0) : 0;
+                  var peNow    = snap.pe_iv || 0;
+                  var pePrev   = prev ? (prev.pe_iv || 0) : 0;
+
+                  var priceUp  = prev && spotNow > spotPrev;
+                  var priceDn  = prev && spotNow < spotPrev;
+                  var ceUp     = prev && ceNow > cePrev;
+                  var ceDn     = prev && ceNow < cePrev;
+                  var peUp     = prev && peNow > pePrev;
+                  var peDn     = prev && peNow < pePrev;
+
+                  var priceCol = priceUp ? '#4ade80' : priceDn ? '#f87171' : '#94a3b8';
+                  var ceCol    = ceUp    ? '#f87171' : ceDn    ? '#4ade80' : '#f87171';
+                  var peCol    = peUp    ? '#f87171' : peDn    ? '#4ade80' : '#4ade80';
+
+                  var priceArrow = priceUp ? '↑' : priceDn ? '↓' : '';
+                  var ceArrow    = ceUp    ? '↑' : ceDn    ? '↓' : '';
+                  var peArrow    = peUp    ? '↑' : peDn    ? '↓' : '';
+
+                  var signal = null; var signalColor = '#64748b';
+                  if (prev) {
+                    if      (priceUp && ceUp  && peDn) { signal = 'BREAKOUT';      signalColor = '#4ade80'; }
+                    else if (priceUp && ceUp  && peUp) { signal = 'CAUTIOUS RALLY'; signalColor = '#f59e0b'; }
+                    else if (priceUp && ceDn  && peDn) { signal = 'WEAK RALLY';    signalColor = '#64748b'; }
+                    else if (priceUp && ceDn  && peUp) { signal = 'TRAP RALLY';    signalColor = '#f87171'; }
+                    else if (priceDn && peUp  && ceDn) { signal = 'BREAKDOWN';     signalColor = '#f87171'; }
+                    else if (priceDn && peUp  && ceUp) { signal = 'CAUTIOUS FALL'; signalColor = '#f59e0b'; }
+                    else if (priceDn && peDn  && ceDn) { signal = 'WEAK SELLING';  signalColor = '#64748b'; }
+                    else if (priceDn && peDn  && ceUp) { signal = 'TRAP FALL';     signalColor = '#4ade80'; }
+                    else if (!priceUp && !priceDn)      { signal = 'FLAT';         signalColor = '#475569'; }
+                  }
+
+                  return (
+                    <tr key={i} style={{
+                      background:   isLatest ? 'rgba(96,165,250,0.07)' : 'transparent',
+                      borderBottom: '1px solid #1e293b22',
+                      opacity:      Math.max(0.4, 1 - i * 0.06),
+                    }}>
+                      <td style={{ padding: '7px 12px', color: isLatest ? '#f1f5f9' : '#64748b',
+                                   fontWeight: isLatest ? 700 : 400, whiteSpace: 'nowrap' }}>
+                        {snap.time}
+                        {isLatest && <span style={{ marginLeft: 6, fontSize: 8, color: '#4ade80', fontWeight: 700 }}>LATEST</span>}
+                      </td>
+                      <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: isLatest ? 700 : 500 }}>
+                        <span style={{ color: '#94a3b8' }}>{spotNow > 0 ? spotNow.toFixed(0) : '—'}</span>
+                        {priceArrow && <span style={{ fontSize: 10, color: priceCol, marginLeft: 4, fontWeight: 700 }}>{priceArrow}</span>}
+                      </td>
+                      <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: isLatest ? 700 : 500 }}>
+                        <span style={{ color: '#f87171' }}>{ceNow > 0 ? ceNow.toFixed(2) + '%' : '—'}</span>
+                        {ceArrow && <span style={{ fontSize: 10, color: ceCol, marginLeft: 4, fontWeight: 700 }}>{ceArrow}</span>}
+                      </td>
+                      <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: isLatest ? 700 : 500 }}>
+                        <span style={{ color: '#4ade80' }}>{peNow > 0 ? peNow.toFixed(2) + '%' : '—'}</span>
+                        {peArrow && <span style={{ fontSize: 10, color: peCol, marginLeft: 4, fontWeight: 700 }}>{peArrow}</span>}
+                      </td>
+                      <td style={{ padding: '7px 14px' }}>
+                        {signal ? (
+                          <span style={{ fontSize: 11, fontWeight: 700, color: signalColor,
+                                         padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap',
+                                         background: signalColor + '18', border: '1px solid ' + signalColor + '33' }}>
+                            {signal}
+                          </span>
+                        ) : <span style={{ fontSize: 10, color: '#334155' }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: 9, color: '#334155', margin: '8px 0 0' }}>
+            Price ↑↓ green/red · CE IV ↑ red (expensive) ↓ green (cheaper) · PE IV ↑ red (expensive) ↓ green (cheaper)
+          </p>
+        </div>
+      )}
+
       {/* Decision summary */}
       {decisions && decisions.length > 0 && (
         <div style={{ padding: '14px 20px' }}>
