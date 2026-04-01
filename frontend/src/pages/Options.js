@@ -1839,6 +1839,7 @@ function PreTradeModal(props) {
         isTransparent:    true,
         backgroundColor:  'rgba(10,22,40,0)',
         gridColor:        'rgba(30,41,59,0.5)',
+        studies:          ['VWAP@tv-basicstudies'],
       });
       container.appendChild(script);
       el.appendChild(container);
