@@ -14,6 +14,12 @@ FEEDS = [
     { 'url': 'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines',    'source': 'MarketWatch',   'region': 'GLOBAL' },
     { 'url': 'https://www.investing.com/rss/news.rss',                               'source': 'Investing.com', 'region': 'GLOBAL' },
     { 'url': 'https://www.investing.com/rss/market_overview.rss',                    'source': 'Investing.com', 'region': 'GLOBAL' },
+    # Reddit — Finance & Markets
+    { 'url': 'https://www.reddit.com/r/IndiaInvestments/hot.rss?limit=15',           'source': 'r/IndiaInvest', 'region': 'IN'     },
+    { 'url': 'https://www.reddit.com/r/stocks/hot.rss?limit=15',                     'source': 'r/stocks',      'region': 'GLOBAL' },
+    { 'url': 'https://www.reddit.com/r/economics/hot.rss?limit=15',                  'source': 'r/economics',   'region': 'GLOBAL' },
+    { 'url': 'https://www.reddit.com/r/investing/hot.rss?limit=15',                  'source': 'r/investing',   'region': 'GLOBAL' },
+    { 'url': 'https://www.reddit.com/r/worldnews/search.rss?q=market+economy+fed+inflation&sort=new&limit=10', 'source': 'r/worldnews', 'region': 'GLOBAL' },
 ]
 
 MAX_AGE_HOURS = 48
@@ -45,7 +51,13 @@ def fetch_all_feeds():
 
     for feed in FEEDS:
         try:
-            parsed = feedparser.parse(feed['url'])
+            # Reddit requires a User-Agent header
+            if 'reddit.com' in feed['url']:
+                parsed = feedparser.parse(feed['url'], request_headers={
+                    'User-Agent': 'MorningTrade/1.0 (market data aggregator; contact@morningtrade.eu)'
+                })
+            else:
+                parsed = feedparser.parse(feed['url'])
             if not parsed.entries:
                 print(f"  [news] no entries: {feed['source']} {feed['url'].split('/')[-1]}")
                 continue
