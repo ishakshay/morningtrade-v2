@@ -1668,6 +1668,29 @@ function PreTradeModal(props) {
   var onClose  = props.onClose;
 
   var [checks, setChecks] = React.useState({ sl: false, target: false, notChasing: false, noEvent: false });
+  var [news, setNews]     = React.useState([]);
+
+  React.useEffect(function() {
+    fetch('http://localhost:3001/api/news?region=GLOBAL')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!Array.isArray(d)) return;
+        var keywords = [
+          'fed','fomc','rate','inflation','cpi','gdp','rbi','nifty','sensex',
+          'recession','rally','crash','sell off','selloff','market','index',
+          'dow','nasdaq','s&p','crude','oil','dollar','rupee','yield','bond',
+          'powell','rbi governor','interest rate','monetary','policy','tariff',
+          'trade war','china','global','economy','economic','stocks fall',
+          'stocks rise','market crash','bull','bear','volatility','vix'
+        ];
+        var filtered = d.filter(function(item) {
+          var text = (item.title + ' ' + (item.summary || '')).toLowerCase();
+          return keywords.some(function(k) { return text.includes(k); });
+        });
+        setNews(filtered.slice(0, 8));
+      })
+      .catch(function() {});
+  }, []);
 
   function toggleCheck(key) {
     setChecks(function(prev) { return Object.assign({}, prev, { [key]: !prev[key] }); });
@@ -1829,7 +1852,6 @@ function PreTradeModal(props) {
     { label: 'Market Breadth',  type: breadthType,  value: adRatio > 0 ? adRatio + 'x' : '—', detail: breadthLabel },
     { label: 'VWAP Position',   type: vwapType,     value: niftyLast > vwapApprox ? 'Above' : niftyLast < vwapApprox ? 'Below' : '—', detail: vwapLabel },
     { label: 'Expiry Risk',     type: expiryType,   value: tDays !== null ? tDays + 'd' : '—', detail: expiryLabel },
-    { label: 'Crude Oil',       type: crudeType,    value: crudeVal > 0 ? '$' + crudeVal : '—', detail: crudeLabel },
   ];
 
   return (
@@ -1931,19 +1953,7 @@ function PreTradeModal(props) {
                 </div>
               );
             })()}
-            {/* Expiry */}
-            {(function() {
-              var col = condColor(expiryType); var bg = condBg(expiryType);
-              return (
-                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Days to Expiry</span>
-                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{tDays !== null ? tDays + 'd' : '—'}</span>
-                  </div>
-                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{expiryLabel}</p>
-                </div>
-              );
-            })()}
+
             {/* VIX */}
             {(function() {
               var col = condColor(vixType); var bg = condBg(vixType);
@@ -1966,11 +1976,11 @@ function PreTradeModal(props) {
             <span style={{ fontSize: 13 }}>📊</span>
             <p style={{ fontSize: 11, fontWeight: 700, color: '#60a5fa', margin: 0,
                          textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Direction — need 2 of 3 green to trade
+              Direction — is there a clear edge?
             </p>
           </div>
           <p style={{ fontSize: 10, color: '#334155', margin: '0 0 12px 21px' }}>
-            If only 1 of 3 → half size. If 0 → wait.
+            2 of 3 green → trade in the direction signals indicate · 1 of 3 → half size · 0 → wait
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
             {/* IV Signal */}
@@ -2027,7 +2037,7 @@ function PreTradeModal(props) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
             {[
               { label: 'Market Breadth', type: breadthType,  value: adRatio > 0 ? adRatio + 'x' : '—', detail: breadthLabel },
-              { label: 'Crude Oil',      type: crudeType,    value: crudeVal > 0 ? '$' + crudeVal : '—', detail: crudeLabel },
+
               { label: 'USD/INR',        type: (function() { var u = overview['USDINR'] || {}; return u.is_up ? 'red' : u.last ? 'green' : 'amber'; })(),
                                          value: (function() { var u = overview['USDINR'] || {}; return u.last ? u.last : '—'; })(),
                                          detail: (function() { var u = overview['USDINR'] || {}; return u.last ? (u.is_up ? 'INR weakening — FII selling pressure, headwind for bulls' : 'INR strengthening — FII buying, tailwind for bulls') : 'No data'; })() },
@@ -2260,6 +2270,48 @@ function PreTradeModal(props) {
             </div>
           );
         })()}
+
+        {/* ── LIVE NEWS FEED ───────────────────────────────── */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 13 }}>📰</span>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', margin: 0,
+                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Latest Market News
+            </p>
+          </div>
+          {news.length === 0 ? (
+            <p style={{ fontSize: 11, color: '#475569', margin: 0 }}>Loading news...</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {news.map(function(item, i) {
+                var isGlobal = item.region === 'GLOBAL';
+                var tagCol   = isGlobal ? '#60a5fa' : '#f59e0b';
+                var ago      = item.published_at
+                  ? (function() {
+                      var diff = Math.floor((Date.now() - new Date(item.published_at)) / 60000);
+                      return diff < 60 ? diff + 'm ago' : Math.floor(diff/60) + 'h ago';
+                    })()
+                  : '';
+                return (
+                  <a key={i} href={item.url || '#'} target="_blank" rel="noreferrer"
+                     style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 12px',
+                              background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+                              textDecoration: 'none', transition: 'border-color 0.15s' }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
+                                   background: tagCol + '18', color: tagCol, flexShrink: 0, marginTop: 1 }}>
+                      {item.source || 'NEWS'}
+                    </span>
+                    <span style={{ fontSize: 11, color: '#cbd5e1', flex: 1, lineHeight: 1.5 }}>
+                      {item.title}
+                    </span>
+                    {ago && <span style={{ fontSize: 9, color: '#475569', flexShrink: 0, marginTop: 2 }}>{ago}</span>}
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* X / Twitter — Quick Links */}
         <div style={{ padding: '14px 20px', borderTop: '1px solid #1e293b' }}>
