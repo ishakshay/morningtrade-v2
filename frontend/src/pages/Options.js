@@ -1667,6 +1667,12 @@ function PreTradeModal(props) {
   var symbol   = props.symbol   || 'NIFTY';
   var onClose  = props.onClose;
 
+  var [checks, setChecks] = React.useState({ sl: false, target: false, notChasing: false, noEvent: false });
+
+  function toggleCheck(key) {
+    setChecks(function(prev) { return Object.assign({}, prev, { [key]: !prev[key] }); });
+  }
+
   // 9 indices — each gets its own mini chart widget injected into its ref
   var indices = [
     { sym: 'FOREXCOM:SPX500', label: 'S&P 500',     group: 'US' },
@@ -1807,6 +1813,15 @@ function PreTradeModal(props) {
     ? 'Spot ' + niftyLast + ' vs approx VWAP ' + vwapApprox + (niftyLast > vwapApprox ? ' — above VWAP' : ' — below VWAP')
     : 'Use Futures Dashboard for accurate VWAP';
 
+  var crude      = overview['CRUDE'] || {};
+  var crudeVal   = crude.last || 0;
+  var crudeChg   = crude.pct_change || 0;
+  var crudeType  = crudeVal === 0 ? 'amber' : crudeChg > 2 ? 'red' : crudeChg < -2 ? 'green' : 'amber';
+  var crudeLabel = crudeVal > 0
+    ? '$' + crudeVal + ' · ' + (crudeChg > 0 ? '+' : '') + crudeChg + '% · '
+      + (crudeChg > 2 ? 'Sharp rise — inflation risk for India' : crudeChg < -2 ? 'Falling — positive for India' : 'Stable — neutral')
+    : 'No data';
+
   var conditions = [
     { label: 'India VIX',       type: vixType,     value: vixVal > 0 ? vixVal : '—',    detail: vixLabel },
     { label: 'PCR (OI)',        type: pcrType,      value: pcrNow || '—',                detail: pcrLabel },
@@ -1814,6 +1829,7 @@ function PreTradeModal(props) {
     { label: 'Market Breadth',  type: breadthType,  value: adRatio > 0 ? adRatio + 'x' : '—', detail: breadthLabel },
     { label: 'VWAP Position',   type: vwapType,     value: niftyLast > vwapApprox ? 'Above' : niftyLast < vwapApprox ? 'Below' : '—', detail: vwapLabel },
     { label: 'Expiry Risk',     type: expiryType,   value: tDays !== null ? tDays + 'd' : '—', detail: expiryLabel },
+    { label: 'Crude Oil',       type: crudeType,    value: crudeVal > 0 ? '$' + crudeVal : '—', detail: crudeLabel },
   ];
 
   return (
@@ -1879,41 +1895,371 @@ function PreTradeModal(props) {
           })}
         </div>
 
-        {/* Conditions grid */}
-        <div style={{ padding: '14px 20px' }}>
-          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 12px',
-                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Market Conditions — from your live data
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            {conditions.map(function(c, i) {
-              var col = condColor(c.type);
-              var bg  = condBg(c.type);
+        {/* ── TIER 1: BLOCKERS ─────────────────────────────── */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 13 }}>🚫</span>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#f87171', margin: 0,
+                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Blockers — any red here, do not trade
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            {/* Time of day */}
+            {(function() {
+              var now   = new Date();
+              var h     = now.getHours();
+              var m     = now.getMinutes();
+              var mins  = h * 60 + m;
+              var type, label, detail;
+              if (mins < 9*60+15)  { type = 'amber'; label = 'Pre-market'; detail = 'Market not open yet'; }
+              else if (mins < 9*60+45)  { type = 'red';   label = '9:15–9:45 AM'; detail = 'Opening volatility — wide spreads, avoid buying'; }
+              else if (mins < 11*60+30) { type = 'green';  label = '9:45–11:30 AM'; detail = 'Best window — most directional moves happen here'; }
+              else if (mins < 13*60+30) { type = 'amber'; label = '11:30–1:30 PM'; detail = 'Lunch lull — choppy, reduce size'; }
+              else if (mins < 14*60+30) { type = 'green';  label = '1:30–2:30 PM'; detail = 'Second best window — good for directional trades'; }
+              else if (mins < 15*60+15) { type = 'amber'; label = '2:30–3:15 PM'; detail = 'FII closing moves — can be sharp, be careful'; }
+              else if (mins < 15*60+30) { type = 'red';   label = '3:15–3:30 PM'; detail = 'Last 15 min — wild swings, avoid new entries'; }
+              else                      { type = 'amber'; label = 'After market'; detail = 'Market closed'; }
+              var col = condColor(type); var bg = condBg(type);
               return (
-                <div key={i} style={{ background: bg, border: '1px solid ' + col + '33',
-                                      borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {c.label}
-                    </span>
-                    <span style={{ fontSize: 14, fontWeight: 800, color: col }}>{c.value}</span>
+                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Time of Day</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{label}</span>
                   </div>
-                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0, lineHeight: 1.5 }}>{c.detail}</p>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{detail}</p>
+                </div>
+              );
+            })()}
+            {/* Expiry */}
+            {(function() {
+              var col = condColor(expiryType); var bg = condBg(expiryType);
+              return (
+                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Days to Expiry</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{tDays !== null ? tDays + 'd' : '—'}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{expiryLabel}</p>
+                </div>
+              );
+            })()}
+            {/* VIX */}
+            {(function() {
+              var col = condColor(vixType); var bg = condBg(vixType);
+              return (
+                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>India VIX</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{vixVal > 0 ? vixVal : '—'}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{vixLabel}</p>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* ── TIER 2: DIRECTION ────────────────────────────── */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 13 }}>📊</span>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#60a5fa', margin: 0,
+                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Direction — need 2 of 3 green to trade
+            </p>
+          </div>
+          <p style={{ fontSize: 10, color: '#334155', margin: '0 0 12px 21px' }}>
+            If only 1 of 3 → half size. If 0 → wait.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            {/* IV Signal */}
+            {(function() {
+              var col = condColor(ivType); var bg = condBg(ivType);
+              return (
+                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>IV Signal</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: col }}>{ivSignal || '—'}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{ivLabel}</p>
+                </div>
+              );
+            })()}
+            {/* PCR COI */}
+            {(function() {
+              var col = condColor(pcrType); var bg = condBg(pcrType);
+              return (
+                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>PCR (OI)</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{pcrNow || '—'}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{pcrLabel}</p>
+                </div>
+              );
+            })()}
+            {/* VWAP */}
+            {(function() {
+              var col = condColor(vwapType); var bg = condBg(vwapType);
+              return (
+                <div style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>VWAP Position</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{niftyLast > vwapApprox ? 'Above' : niftyLast < vwapApprox ? 'Below' : '—'}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{vwapLabel}</p>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* ── TIER 3: CONTEXT ──────────────────────────────── */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 13 }}>🌍</span>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', margin: 0,
+                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Context — affects size, not direction
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+            {[
+              { label: 'Market Breadth', type: breadthType,  value: adRatio > 0 ? adRatio + 'x' : '—', detail: breadthLabel },
+              { label: 'Crude Oil',      type: crudeType,    value: crudeVal > 0 ? '$' + crudeVal : '—', detail: crudeLabel },
+              { label: 'USD/INR',        type: (function() { var u = overview['USDINR'] || {}; return u.is_up ? 'red' : u.last ? 'green' : 'amber'; })(),
+                                         value: (function() { var u = overview['USDINR'] || {}; return u.last ? u.last : '—'; })(),
+                                         detail: (function() { var u = overview['USDINR'] || {}; return u.last ? (u.is_up ? 'INR weakening — FII selling pressure, headwind for bulls' : 'INR strengthening — FII buying, tailwind for bulls') : 'No data'; })() },
+            ].map(function(c, i) {
+              var col = condColor(c.type); var bg = condBg(c.type);
+              return (
+                <div key={i} style={{ background: bg, border: '1px solid ' + col + '33', borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{c.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{c.value}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>{c.detail}</p>
                 </div>
               );
             })}
           </div>
-
-          {/* Quick decision guide */}
-          <div style={{ marginTop: 14, padding: '10px 14px', background: '#1e293b', borderRadius: 8,
-                        border: '1px solid #334155', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Quick guide</span>
-            <span style={{ fontSize: 11, color: '#4ade80' }}>🟢 5+ green → full size</span>
-            <span style={{ fontSize: 11, color: '#f59e0b' }}>🟡 3-4 green → half size</span>
-            <span style={{ fontSize: 11, color: '#f87171' }}>🔴 &lt;3 green → wait</span>
-            <span style={{ fontSize: 11, color: '#475569' }}>IV Signal TRAP → do not trade</span>
-          </div>
         </div>
+
+        {/* ── TIER 4: MY TRADE CHECKLIST ───────────────────── */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 13 }}>📋</span>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', margin: 0,
+                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              My Trade — tick all before clicking buy
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+            {[
+              { key: 'noEvent',    label: 'No major event in next 60 min',   desc: 'RBI, Fed, GDP, election results — check economic calendar' },
+              { key: 'sl',         label: 'Stop loss defined',                desc: 'Know your max loss before entering. No stop = no trade.' },
+              { key: 'target',     label: 'Target defined (min 1:2 R:R)',     desc: 'If risking ₹5,000, target must be ₹10,000+' },
+              { key: 'notChasing', label: 'Not chasing the move',             desc: 'Has the move already happened? Buying after +80pts is usually wrong.' },
+            ].map(function(item) {
+              var checked = checks[item.key];
+              return (
+                <div key={item.key}
+                     onClick={function() { toggleCheck(item.key); }}
+                     style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '10px 14px',
+                              background: checked ? 'rgba(74,222,128,0.08)' : '#1e293b',
+                              border: '1px solid ' + (checked ? '#4ade8033' : '#334155'),
+                              borderLeft: '3px solid ' + (checked ? '#4ade80' : '#475569'),
+                              borderRadius: 8, cursor: 'pointer', transition: 'all 0.15s' }}>
+                  <div style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0, marginTop: 1,
+                                background: checked ? '#4ade80' : 'transparent',
+                                border: '2px solid ' + (checked ? '#4ade80' : '#475569'),
+                                display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {checked && <span style={{ fontSize: 11, color: '#0f172a', fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: checked ? '#4ade80' : '#94a3b8', margin: '0 0 2px' }}>{item.label}</p>
+                    <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>{item.desc}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {/* All checked summary */}
+          {(function() {
+            var allChecked = checks.sl && checks.target && checks.notChasing && checks.noEvent;
+            var count = [checks.sl, checks.target, checks.notChasing, checks.noEvent].filter(Boolean).length;
+            var color = allChecked ? '#4ade80' : count >= 2 ? '#f59e0b' : '#f87171';
+            var msg   = allChecked ? 'All checks passed — you are ready to trade' : count + '/4 checked — complete all before entering';
+            return (
+              <div style={{ marginTop: 10, padding: '10px 14px', background: color + '10',
+                            border: '1px solid ' + color + '33', borderRadius: 8,
+                            display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 18 }}>{allChecked ? '✅' : '⏳'}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: color }}>{msg}</span>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* ── KEY EVENTS CALENDAR ──────────────────────────── */}
+        {(function() {
+          var today = new Date();
+          var todayStr = today.toISOString().split('T')[0];
+
+          // IST offset = +5:30
+          function toIST(dateStr, timeIST) {
+            return dateStr + ' ' + timeIST + ' IST';
+          }
+
+          // Known high-impact events for India — updated for 2026
+          // F&O expiry = every Thursday, monthly = last Thursday
+          function getNextThursdays(count) {
+            var result = [];
+            var d = new Date();
+            d.setHours(0,0,0,0);
+            while (result.length < count) {
+              d.setDate(d.getDate() + 1);
+              if (d.getDay() === 4) { // Thursday
+                result.push(new Date(d));
+              }
+            }
+            return result;
+          }
+
+          var thursdays = getNextThursdays(8);
+
+          // Determine if a Thursday is monthly (last Thursday of that month)
+          function isMonthlyExpiry(date) {
+            var d = new Date(date);
+            d.setDate(d.getDate() + 7);
+            return d.getMonth() !== date.getMonth();
+          }
+
+          var events = [
+            // Recurring F&O expiries
+            ...thursdays.map(function(d) {
+              var monthly = isMonthlyExpiry(d);
+              return {
+                date:   d.toISOString().split('T')[0],
+                time:   '03:30 PM',
+                event:  monthly ? 'Monthly F&O Expiry' : 'Weekly F&O Expiry',
+                impact: monthly ? 'high' : 'medium',
+                country:'IN',
+                note:   monthly ? 'Monthly options expire — high volatility in last hour' : 'Weekly options expire — avoid buying after 2 PM',
+              };
+            }),
+            // Known RBI MPC 2026 dates (published by RBI annually)
+            { date: '2026-04-07', time: '10:00 AM', event: 'RBI MPC Decision',    impact: 'high', country: 'IN', note: 'Rate decision + policy statement. IV spikes before, crushes after.' },
+            { date: '2026-06-06', time: '10:00 AM', event: 'RBI MPC Decision',    impact: 'high', country: 'IN', note: 'Rate decision + policy statement. IV spikes before, crushes after.' },
+            { date: '2026-08-06', time: '10:00 AM', event: 'RBI MPC Decision',    impact: 'high', country: 'IN', note: 'Rate decision + policy statement. IV spikes before, crushes after.' },
+            // US events that affect India
+            { date: '2026-05-06', time: '11:30 PM', event: 'US FOMC Decision',    impact: 'high', country: 'US', note: 'Fed rate decision. India markets gap up/down next morning.' },
+            { date: '2026-06-17', time: '11:30 PM', event: 'US FOMC Decision',    impact: 'high', country: 'US', note: 'Fed rate decision. India markets gap up/down next morning.' },
+            // Monthly recurring
+            { date: '2026-04-11', time: '05:30 PM', event: 'India CPI Inflation', impact: 'medium', country: 'IN', note: 'Higher than expected CPI = RBI hawkish = bearish for markets' },
+            { date: '2026-05-13', time: '05:30 PM', event: 'India CPI Inflation', impact: 'medium', country: 'IN', note: 'Higher than expected CPI = RBI hawkish = bearish for markets' },
+          ];
+
+          // Sort by date, filter next 14 days
+          var cutoff = new Date();
+          cutoff.setDate(cutoff.getDate() + 14);
+          var upcoming = events
+            .filter(function(e) { return e.date >= todayStr && new Date(e.date) <= cutoff; })
+            .sort(function(a, b) { return a.date.localeCompare(b.date); });
+
+          var todayEvents = upcoming.filter(function(e) { return e.date === todayStr; });
+          var futureEvents = upcoming.filter(function(e) { return e.date > todayStr; });
+
+          function impactColor(impact) {
+            return impact === 'high' ? '#f87171' : impact === 'medium' ? '#f59e0b' : '#4ade80';
+          }
+
+          function fmtDate(dateStr) {
+            var d = new Date(dateStr + 'T00:00:00');
+            var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            var diff = Math.round((d - new Date(todayStr + 'T00:00:00')) / 86400000);
+            var label = diff === 1 ? 'Tomorrow' : diff === 0 ? 'Today' : days[d.getDay()] + ' ' + d.getDate() + ' ' + months[d.getMonth()];
+            return label;
+          }
+
+          return (
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 13 }}>📅</span>
+                <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', margin: 0,
+                             textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Key Events — next 14 days
+                </p>
+              </div>
+
+              {/* Today's events — highlighted as blocker */}
+              {todayEvents.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, color: '#f87171', margin: '0 0 6px',
+                               textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    ⚠️ Today — review before trading
+                  </p>
+                  {todayEvents.map(function(e, i) {
+                    return (
+                      <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start',
+                                            padding: '8px 12px', background: 'rgba(248,113,113,0.1)',
+                                            border: '1px solid #f8717133', borderLeft: '3px solid #f87171',
+                                            borderRadius: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                                       background: impactColor(e.impact) + '22', color: impactColor(e.impact),
+                                       whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {e.country} · {e.impact.toUpperCase()}
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>{e.event}</span>
+                            <span style={{ fontSize: 11, color: '#64748b' }}>{e.time}</span>
+                          </div>
+                          <p style={{ fontSize: 10, color: '#94a3b8', margin: '2px 0 0' }}>{e.note}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {todayEvents.length === 0 && (
+                <div style={{ padding: '8px 12px', background: 'rgba(74,222,128,0.08)',
+                              border: '1px solid #4ade8033', borderRadius: 8, marginBottom: 12 }}>
+                  <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✓ No major events today</span>
+                </div>
+              )}
+
+              {/* Upcoming events */}
+              {futureEvents.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {futureEvents.slice(0, 8).map(function(e, i) {
+                    var col = impactColor(e.impact);
+                    return (
+                      <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'center',
+                                            padding: '7px 12px', background: '#1e293b',
+                                            border: '1px solid #334155', borderRadius: 8 }}>
+                        <span style={{ fontSize: 10, color: '#475569', minWidth: 70, flexShrink: 0 }}>{fmtDate(e.date)}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                                       background: col + '18', color: col, flexShrink: 0, minWidth: 60, textAlign: 'center' }}>
+                          {e.country} · {e.impact === 'high' ? 'HIGH' : e.impact === 'medium' ? 'MED' : 'LOW'}
+                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#f1f5f9', flex: 1 }}>{e.event}</span>
+                        <span style={{ fontSize: 10, color: '#475569', flexShrink: 0 }}>{e.time}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <p style={{ fontSize: 9, color: '#334155', margin: '10px 0 0' }}>
+                F&O expiry dates auto-calculated · RBI MPC + FOMC dates for 2026 · Times in IST
+              </p>
+            </div>
+          );
+        })()}
 
         {/* X / Twitter — Quick Links */}
         <div style={{ padding: '14px 20px', borderTop: '1px solid #1e293b' }}>
