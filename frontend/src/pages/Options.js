@@ -1671,17 +1671,20 @@ function PreTradeModal(props) {
   var [news, setNews]     = React.useState([]);
 
   React.useEffect(function() {
-    fetch('http://localhost:3001/api/news?region=GLOBAL')
+    fetch('http://localhost:3001/api/news')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!Array.isArray(d)) return;
         var keywords = [
-          'fed','fomc','rate','inflation','cpi','gdp','rbi','nifty','sensex',
-          'recession','rally','crash','sell off','selloff','market','index',
-          'dow','nasdaq','s&p','crude','oil','dollar','rupee','yield','bond',
-          'powell','rbi governor','interest rate','monetary','policy','tariff',
-          'trade war','china','global','economy','economic','stocks fall',
-          'stocks rise','market crash','bull','bear','volatility','vix'
+          'fed','fomc','rate hike','rate cut','inflation','cpi','gdp',
+          'recession','market crash','sell off','selloff','dow jones','nasdaq 100',
+          'crude oil','brent','dollar index','rupee falls','rupee rises','bond yield',
+          'powell','interest rate','monetary policy','tariff','trade war',
+          'global markets','us markets','asian markets','european markets',
+          'bear market','bull market','volatility','vix','nifty falls','nifty rises',
+          'sensex falls','sensex rises','rbi rate','rbi policy','rbi governor',
+          'foreign investors','fii','rate decision','stock market today',
+          'markets fall','markets rise','s&p 500','treasury'
         ];
         var filtered = d.filter(function(item) {
           var text = (item.title + ' ' + (item.summary || '')).toLowerCase();
