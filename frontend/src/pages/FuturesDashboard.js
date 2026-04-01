@@ -260,114 +260,6 @@ function IntradayTable(props) {
   );
 }
 
-function StrikeTable(props) {
-  var strikes = props.strikes || [];
-  var futures = props.futures || {};
-  if (strikes.length === 0) return null;
-
-  function fmtD(n) {
-    if (!n && n !== 0) return '—';
-    var abs = Math.abs(n);
-    if (abs >= 100000) return (n > 0 ? '+' : '') + (n / 100000).toFixed(1) + 'L';
-    if (abs >= 1000)   return (n > 0 ? '+' : '') + (n / 1000).toFixed(0) + 'K';
-    return (n > 0 ? '+' : '') + n;
-  }
-
-  return (
-    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b' }}>
-        <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0,
-                     textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Strike Signals — ATM ±7
-        </p>
-        <p style={{ fontSize: 11, color: '#475569', margin: '3px 0 0' }}>
-          Option signal uses vol diff + PCR(COI) · Futures signal same for all rows (LTP vs VWAP)
-        </p>
-      </div>
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ background: '#1e293b' }}>
-              <th style={{ padding: '8px 14px', color: '#f1f5f9', textAlign: 'center', fontWeight: 700, minWidth: 90 }}>Strike</th>
-              <th style={{ padding: '8px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600, minWidth: 100 }}>
-                Vol Diff
-                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>PE − CE Vol</span>
-              </th>
-              <th style={{ padding: '8px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600, minWidth: 80 }}>
-                PCR (COI)
-                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>PE / CE COI</span>
-              </th>
-              <th style={{ padding: '8px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600, minWidth: 110, borderLeft: '1px solid #334155' }}>Option Signal</th>
-              <th style={{ padding: '8px 12px', color: '#60a5fa', textAlign: 'center', fontWeight: 600, minWidth: 90,  borderLeft: '1px solid #334155' }}>Fut Price</th>
-              <th style={{ padding: '8px 12px', color: '#60a5fa', textAlign: 'center', fontWeight: 600, minWidth: 90  }}>VWAP</th>
-              <th style={{ padding: '8px 12px', color: '#60a5fa', textAlign: 'center', fontWeight: 600, minWidth: 110 }}>
-                Futures Signal
-                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>LTP vs VWAP</span>
-              </th>
-              <th style={{ padding: '8px 12px', color: '#a78bfa', textAlign: 'center', fontWeight: 700, minWidth: 130, borderLeft: '2px solid #334155' }}>Combined</th>
-              <th style={{ padding: '8px 12px', color: '#f87171', textAlign: 'right',  fontWeight: 600, minWidth: 70  }}>CE LTP</th>
-              <th style={{ padding: '8px 12px', color: '#4ade80', textAlign: 'right',  fontWeight: 600, minWidth: 70  }}>PE LTP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {strikes.map(function(row) {
-              var isATM   = row.is_atm;
-              var rowBg   = isATM ? 'rgba(96,165,250,0.1)' : 'transparent';
-              var volDiff = row.vol_diff || 0;
-              var volBal  = row.vol_dom_pct < 10;
-              var volCol  = volBal ? '#64748b' : volDiff > 0 ? '#4ade80' : '#f87171';
-              var volLbl  = volBal ? 'Balanced' : volDiff > 0 ? 'PE Dom' : 'CE Dom';
-              var pcrCol  = row.pcr_coi > 1.2 ? '#4ade80' : row.pcr_coi < 0.8 && row.pcr_coi > 0 ? '#f87171' : '#f59e0b';
-              var combBg  = row.combined === 'STRONG BUY'  ? 'rgba(74,222,128,0.15)'
-                          : row.combined === 'STRONG SELL' ? 'rgba(248,113,113,0.15)'
-                          : row.combined === 'MILD BUY'    ? 'rgba(134,239,172,0.08)'
-                          : row.combined === 'MILD SELL'   ? 'rgba(252,165,165,0.08)'
-                          : 'rgba(245,158,11,0.06)';
-              return (
-                <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
-                  <td style={{ padding: '9px 14px', textAlign: 'center', fontWeight: 800, fontSize: 14, color: isATM ? '#60a5fa' : '#f1f5f9' }}>
-                    {row.strike}
-                    {isATM && <span style={{ display: 'block', fontSize: 9, color: '#60a5fa', fontWeight: 600 }}>ATM</span>}
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center' }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: volCol }}>{volBal ? '—' : fmtD(volDiff)}</span>
-                    <span style={{ display: 'block', fontSize: 9, color: volCol, fontWeight: 600, marginTop: 2 }}>{volLbl}</span>
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: 700, color: pcrCol }}>
-                    {row.pcr_coi > 0 ? row.pcr_coi : '—'}
-                    <span style={{ display: 'block', fontSize: 9, fontWeight: 600, color: pcrCol, marginTop: 2 }}>
-                      {row.pcr_coi > 1.2 ? 'Bullish' : row.pcr_coi < 0.8 && row.pcr_coi > 0 ? 'Bearish' : 'Neutral'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center', borderLeft: '1px solid #1e293b' }}>
-                    <SignalBadge signal={row.opt_signal} color={row.opt_signal_color} />
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center', borderLeft: '1px solid #1e293b', color: futures.fut_signal_color || '#f59e0b', fontWeight: 700 }}>
-                    {futures.fut_ltp || '—'}
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center', color: '#60a5fa', fontWeight: 600 }}>
-                    {futures.fut_vwap || '—'}
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center' }}>
-                    <SignalBadge signal={futures.fut_signal || 'NEUTRAL'} />
-                    <span style={{ display: 'block', fontSize: 9, color: '#475569', marginTop: 3 }}>
-                      {futures.fut_vs_vwap != null ? (futures.fut_vs_vwap > 0 ? '+' : '') + futures.fut_vs_vwap + ' pts' : ''}
-                    </span>
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'center', borderLeft: '2px solid #334155', background: combBg }}>
-                    <SignalBadge signal={row.combined} color={row.combined_color} />
-                  </td>
-                  <td style={{ padding: '9px 12px', textAlign: 'right', color: '#f87171', fontWeight: 600 }}>{row.ce_ltp || '—'}</td>
-                  <td style={{ padding: '9px 12px', textAlign: 'right', color: '#4ade80', fontWeight: 600 }}>{row.pe_ltp || '—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 export default function FuturesDashboard() {
   var { user }  = useAuth();
@@ -424,7 +316,6 @@ export default function FuturesDashboard() {
     );
   }
 
-  var strikes = data ? (data.strikes         || []) : [];
   var futures = data ? (data.futures          || {}) : {};
   var history = data ? (data.intraday_history || []) : [];
 
@@ -504,8 +395,6 @@ export default function FuturesDashboard() {
           {/* PRIMARY: Intraday trend sorted newest first */}
           <IntradayTable history={history} />
 
-          {/* SECONDARY: Per-strike signals */}
-          <StrikeTable strikes={strikes} futures={futures} />
         </div>
       )}
     </div>
