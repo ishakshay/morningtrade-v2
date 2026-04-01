@@ -108,7 +108,7 @@ def fetch_option_chain(symbol):
                 atm     = result.get('atm_strike')
                 atm_row = next((r for r in chain if r['strike'] == atm), None)
                 if atm_row and atm_row.get('ce_iv', 0) > 0:
-                    save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'], atm_row.get('ce_ltp', 0), atm_row.get('pe_ltp', 0), result.get('spot_price', 0))
+                    save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'], atm_row.get('ce_ltp', 0), atm_row.get('pe_ltp', 0))
                 result['iv_history'] = get_iv_history(symbol)
             except Exception as e:
                 print(f"  [nse_options] IV error: {e}")
@@ -372,10 +372,12 @@ def parse_option_chain(data, symbol):
         if strike in five_strikes:
             five_ce_coi += ce_chg_oi
             five_pe_coi += pe_chg_oi
-            pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi != 0 else (0 if pe_chg_oi == 0 else None)
+            pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi != 0 else (None if pe_chg_oi == 0 else None)
             five_strike_rows.append({
                 'strike':    strike,
                 'is_atm':   strike == atm_strike,
+                'ce_oi':     ce_oi,
+                'pe_oi':     pe_oi,
                 'ce_chg_oi': ce_chg_oi,
                 'pe_chg_oi': pe_chg_oi,
                 'ce_vol':    ce_vol,

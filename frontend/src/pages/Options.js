@@ -1317,8 +1317,24 @@ function FiveStrikeTable(props) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ background: '#1e293b' }}>
+              <th style={{ padding: '8px 10px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                CE OI
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Calls</span>
+              </th>
+              <th style={{ padding: '8px 10px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                CE COI
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Chg OI</span>
+              </th>
               <th style={{ padding: '8px 14px', color: '#f1f5f9', textAlign: 'center', fontWeight: 700, whiteSpace: 'nowrap' }}>Strike</th>
-              <th style={{ padding: '8px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              <th style={{ padding: '8px 10px', color: '#4ade80', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                PE OI
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Puts</span>
+              </th>
+              <th style={{ padding: '8px 10px', color: '#4ade80', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                PE COI
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Chg OI</span>
+              </th>
+              <th style={{ padding: '8px 12px', color: '#94a3b8', textAlign: 'center', fontWeight: 600, whiteSpace: 'nowrap', borderLeft: '1px solid #1e293b' }}>
                 Vol Bias
                 <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>PE−CE Vol</span>
               </th>
@@ -1351,6 +1367,17 @@ function FiveStrikeTable(props) {
               return (
                 <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
 
+                  {/* CE OI */}
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#f87171', fontWeight: 600 }}>
+                    {(function() { var n = row.ce_oi || 0; if (n >= 100000) return (n/100000).toFixed(1)+'L'; if (n >= 1000) return (n/1000).toFixed(0)+'K'; return n; })()}
+                  </td>
+
+                  {/* CE COI */}
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600,
+                               color: (row.ce_chg_oi || 0) > 0 ? '#f87171' : (row.ce_chg_oi || 0) < 0 ? '#4ade80' : '#64748b' }}>
+                    {fmt(row.ce_chg_oi || 0)}
+                  </td>
+
                   {/* Strike */}
                   <td style={{ padding: '8px 14px', textAlign: 'center', fontWeight: 700,
                                fontSize: 13, color: isATM ? '#60a5fa' : '#f1f5f9', whiteSpace: 'nowrap' }}>
@@ -1358,8 +1385,19 @@ function FiveStrikeTable(props) {
                     {isATM && <span style={{ display: 'block', fontSize: 9, color: '#60a5fa', fontWeight: 600 }}>ATM</span>}
                   </td>
 
+                  {/* PE OI */}
+                  <td style={{ padding: '8px 10px', textAlign: 'left', color: '#4ade80', fontWeight: 600 }}>
+                    {(function() { var n = row.pe_oi || 0; if (n >= 100000) return (n/100000).toFixed(1)+'L'; if (n >= 1000) return (n/1000).toFixed(0)+'K'; return n; })()}
+                  </td>
+
+                  {/* PE COI */}
+                  <td style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600,
+                               color: (row.pe_chg_oi || 0) > 0 ? '#4ade80' : (row.pe_chg_oi || 0) < 0 ? '#f87171' : '#64748b' }}>
+                    {fmt(row.pe_chg_oi || 0)}
+                  </td>
+
                   {/* Vol Bias — current */}
-                  <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                  <td style={{ padding: '8px 12px', textAlign: 'center', borderLeft: '1px solid #1e293b' }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: volCol }}>
                       {isBal ? '—' : fmtDiff(volDiff)}
                     </span>
@@ -1401,6 +1439,58 @@ function FiveStrikeTable(props) {
           </tbody>
         </table>
       </div>
+
+      {/* Totals row */}
+      {(function() {
+        var totalCEOI  = rows.reduce(function(s, r) { return s + (r.ce_oi  || 0); }, 0);
+        var totalPEOI  = rows.reduce(function(s, r) { return s + (r.pe_oi  || 0); }, 0);
+        var totalCECOI = rows.reduce(function(s, r) { return s + (r.ce_chg_oi || 0); }, 0);
+        var totalPECOI = rows.reduce(function(s, r) { return s + (r.pe_chg_oi || 0); }, 0);
+
+        function fmtAbs(n) {
+          var abs = Math.abs(n);
+          if (abs >= 100000) return (abs / 100000).toFixed(1) + 'L';
+          if (abs >= 1000)   return (abs / 1000).toFixed(0) + 'K';
+          return abs;
+        }
+        function fmtSigned(n) {
+          var sign = n < 0 ? '-' : '+';
+          var abs  = Math.abs(n);
+          if (abs >= 100000) return sign + (abs / 100000).toFixed(1) + 'L';
+          if (abs >= 1000)   return sign + (abs / 1000).toFixed(0) + 'K';
+          return sign + abs;
+        }
+
+        return (
+          <div style={{ padding: '10px 16px', borderTop: '1px solid #334155',
+                        background: '#1e293b', display: 'flex', gap: 0, alignItems: 'stretch' }}>
+            <div style={{ flex: 1, textAlign: 'right', paddingRight: 14 }}>
+              <p style={{ fontSize: 9, color: '#f87171', fontWeight: 700, margin: '0 0 2px', textTransform: 'uppercase' }}>Total CE OI</p>
+              <p style={{ fontSize: 14, fontWeight: 800, color: '#f87171', margin: 0 }}>{fmtAbs(totalCEOI)}</p>
+            </div>
+            <div style={{ width: 1, background: '#334155', margin: '0 4px' }} />
+            <div style={{ flex: 1, textAlign: 'right', paddingRight: 14 }}>
+              <p style={{ fontSize: 9, color: '#f87171', fontWeight: 700, margin: '0 0 2px', textTransform: 'uppercase' }}>Total CE COI</p>
+              <p style={{ fontSize: 14, fontWeight: 800, color: totalCECOI >= 0 ? '#f87171' : '#4ade80', margin: 0 }}>{fmtSigned(totalCECOI)}</p>
+            </div>
+            <div style={{ width: 1, background: '#334155', margin: '0 4px' }} />
+            <div style={{ flex: 1, textAlign: 'center', padding: '0 8px' }}>
+              <p style={{ fontSize: 9, color: '#64748b', fontWeight: 700, margin: '0 0 2px', textTransform: 'uppercase' }}>ATM ± 5</p>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#475569', margin: 0 }}>11 strikes</p>
+            </div>
+            <div style={{ width: 1, background: '#334155', margin: '0 4px' }} />
+            <div style={{ flex: 1, textAlign: 'left', paddingLeft: 14 }}>
+              <p style={{ fontSize: 9, color: '#4ade80', fontWeight: 700, margin: '0 0 2px', textTransform: 'uppercase' }}>Total PE COI</p>
+              <p style={{ fontSize: 14, fontWeight: 800, color: totalPECOI >= 0 ? '#4ade80' : '#f87171', margin: 0 }}>{fmtSigned(totalPECOI)}</p>
+            </div>
+            <div style={{ width: 1, background: '#334155', margin: '0 4px' }} />
+            <div style={{ flex: 1, textAlign: 'left', paddingLeft: 14 }}>
+              <p style={{ fontSize: 9, color: '#4ade80', fontWeight: 700, margin: '0 0 2px', textTransform: 'uppercase' }}>Total PE OI</p>
+              <p style={{ fontSize: 14, fontWeight: 800, color: '#4ade80', margin: 0 }}>{fmtAbs(totalPEOI)}</p>
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
         Vol Bias: PE Dom = put side more active · CE Dom = call side more active · Each historical column shows COI PCR (top) + Vol Diff PE−CE (bottom)
