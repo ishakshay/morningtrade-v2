@@ -1686,9 +1686,16 @@ function PreTradeModal(props) {
           'foreign investors','fii','rate decision','stock market today',
           'markets fall','markets rise','s&p 500','treasury'
         ];
+        var excludeKeywords = [
+          'top gainers','top losers','gainers & losers','q4 result','q3 result',
+          'board meeting','dividend','ipo','buyback','bonus share','stock split',
+          'sets board','declares result','quarterly result','sets record date'
+        ];
         var filtered = d.filter(function(item) {
           var text = (item.title + ' ' + (item.summary || '')).toLowerCase();
-          return keywords.some(function(k) { return text.includes(k); });
+          var hasKeyword = keywords.some(function(k) { return text.includes(k); });
+          var isExcluded = excludeKeywords.some(function(k) { return text.includes(k); });
+          return hasKeyword && isExcluded === false;
         });
         setNews(filtered.slice(0, 8));
       })

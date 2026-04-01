@@ -30,7 +30,7 @@ def refresh_news():
             print("\n--- Refreshing news ---")
             items    = fetch_all_feeds()
             nse_ann  = get_nse_announcements()
-            all_news = (nse_ann + items)[:50]
+            all_news = (nse_ann + items)[:200]
             global _news_items_cache
             _news_items_cache = {'data': all_news, 'ts': time.time()}
             print(f"  [news] {len(all_news)} items fetched")
