@@ -372,7 +372,7 @@ def parse_option_chain(data, symbol):
         if strike in five_strikes:
             five_ce_coi += ce_chg_oi
             five_pe_coi += pe_chg_oi
-            pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi > 0 else 0
+            pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi != 0 else (0 if pe_chg_oi == 0 else None)
             five_strike_rows.append({
                 'strike':    strike,
                 'is_atm':   strike == atm_strike,
