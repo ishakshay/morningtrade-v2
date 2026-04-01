@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import PageTitle from '../components/PageTitle';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -219,6 +219,7 @@ function TopBar(props) {
     </div>
   );
 }
+
 
 function SectorHighlights(props) {
   var overview = props.overview || {};
@@ -891,123 +892,6 @@ function IVDashboard(props) {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {/* IV Snapshot History — last 12 readings */}
-      {history.length >= 2 && (
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
-          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 10px',
-                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            IV History — last {Math.min(history.length, 12)} readings · newest first · every 3 min
-          </p>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
-              <thead>
-                <tr style={{ background: '#162032' }}>
-                  <th style={{ padding: '6px 12px', color: '#64748b', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>Time</th>
-                  <th style={{ padding: '6px 12px', color: '#60a5fa', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>Price</th>
-                  <th style={{ padding: '6px 12px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>CE IV</th>
-                  <th style={{ padding: '6px 12px', color: '#4ade80', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>PE IV</th>
-                  <th style={{ padding: '6px 12px', color: '#94a3b8', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>Signal</th>
-                  <th style={{ padding: '6px 12px', color: '#94a3b8', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>Action · Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.slice(-12).reverse().map(function(snap, i, arr) {
-                  var prev      = arr[i + 1];
-                  var isLatest  = i === 0;
-
-                  var spotNow  = snap.spot  || 0;
-                  var spotPrev = prev ? (prev.spot  || 0) : 0;
-                  var ceNow    = snap.ce_iv || 0;
-                  var cePrev   = prev ? (prev.ce_iv || 0) : 0;
-                  var peNow    = snap.pe_iv || 0;
-                  var pePrev   = prev ? (prev.pe_iv || 0) : 0;
-
-                  var priceUp  = prev && spotNow > spotPrev;
-                  var priceDn  = prev && spotNow < spotPrev;
-                  var ceUp     = prev && ceNow > cePrev;
-                  var ceDn     = prev && ceNow < cePrev;
-                  var peUp     = prev && peNow > pePrev;
-                  var peDn     = prev && peNow < pePrev;
-
-                  var priceCol = priceUp ? '#4ade80' : priceDn ? '#f87171' : '#94a3b8';
-                  var ceCol    = ceUp    ? '#f87171' : ceDn    ? '#4ade80' : '#f87171';
-                  var peCol    = peUp    ? '#f87171' : peDn    ? '#4ade80' : '#4ade80';
-
-                  var priceArrow = priceUp ? '↑' : priceDn ? '↓' : '';
-                  var ceArrow    = ceUp    ? '↑' : ceDn    ? '↓' : '';
-                  var peArrow    = peUp    ? '↑' : peDn    ? '↓' : '';
-
-                  var signal = null; var signalColor = '#64748b';
-                  var action = null; var reason = null;
-                  if (prev) {
-                    if      (priceUp && ceUp  && peDn) { signal = 'BREAKOUT';      signalColor = '#4ade80'; action = 'Trade the move';      reason = 'Calls bought + puts abandoned — both sides confirm direction'; }
-                    else if (priceUp && ceUp  && peUp) { signal = 'CAUTIOUS RALLY'; signalColor = '#f59e0b'; action = 'Reduce size';        reason = 'Someone hedging upside — conviction is split, do not go all in'; }
-                    else if (priceUp && ceDn  && peDn) { signal = 'WEAK RALLY';    signalColor = '#64748b'; action = 'Wait';               reason = 'IV falling everywhere — no conviction, move likely fades'; }
-                    else if (priceUp && ceDn  && peUp) { signal = 'TRAP RALLY';    signalColor = '#f87171'; action = 'Fade / Protect longs'; reason = 'Puts quietly accumulating — bears disagree with the rally'; }
-                    else if (priceDn && peUp  && ceDn) { signal = 'BREAKDOWN';     signalColor = '#f87171'; action = 'Trade the move';      reason = 'Puts bought + calls abandoned — both sides confirm direction'; }
-                    else if (priceDn && peUp  && ceUp) { signal = 'CAUTIOUS FALL'; signalColor = '#f59e0b'; action = 'Reduce size';        reason = 'Calls being bought into the fall — bounce likely nearby'; }
-                    else if (priceDn && peDn  && ceDn) { signal = 'WEAK SELLING';  signalColor = '#64748b'; action = 'Wait';               reason = 'No fear despite price falling — support likely holds'; }
-                    else if (priceDn && peDn  && ceUp) { signal = 'TRAP FALL';     signalColor = '#4ade80'; action = 'Fade / Protect shorts'; reason = 'Calls quietly accumulating — bulls disagree with the fall'; }
-                    else if (!priceUp && !priceDn)      { signal = 'FLAT';         signalColor = '#475569'; action = 'Wait';               reason = 'Price not moving — no directional edge'; }
-                  }
-
-                  return (
-                    <tr key={i} style={{
-                      background:   isLatest ? 'rgba(96,165,250,0.07)' : 'transparent',
-                      borderBottom: '1px solid #1e293b22',
-                      opacity:      Math.max(0.4, 1 - i * 0.06),
-                    }}>
-                      <td style={{ padding: '7px 12px', color: isLatest ? '#f1f5f9' : '#64748b',
-                                   fontWeight: isLatest ? 700 : 400, whiteSpace: 'nowrap' }}>
-                        {snap.time}
-                        {isLatest && <span style={{ marginLeft: 6, fontSize: 8, color: '#4ade80', fontWeight: 700 }}>LATEST</span>}
-                      </td>
-                      <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: isLatest ? 700 : 500 }}>
-                        <span style={{ color: '#94a3b8' }}>{spotNow > 0 ? spotNow.toFixed(0) : '—'}</span>
-                        {priceArrow && <span style={{ fontSize: 10, color: priceCol, marginLeft: 4, fontWeight: 700 }}>{priceArrow}</span>}
-                      </td>
-                      <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: isLatest ? 700 : 500 }}>
-                        <span style={{ color: '#f87171' }}>{ceNow > 0 ? ceNow.toFixed(2) + '%' : '—'}</span>
-                        {ceArrow && <span style={{ fontSize: 10, color: ceCol, marginLeft: 4, fontWeight: 700 }}>{ceArrow}</span>}
-                      </td>
-                      <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: isLatest ? 700 : 500 }}>
-                        <span style={{ color: '#4ade80' }}>{peNow > 0 ? peNow.toFixed(2) + '%' : '—'}</span>
-                        {peArrow && <span style={{ fontSize: 10, color: peCol, marginLeft: 4, fontWeight: 700 }}>{peArrow}</span>}
-                      </td>
-                      <td style={{ padding: '7px 14px' }}>
-                        {signal ? (
-                          <span style={{ fontSize: 11, fontWeight: 700, color: signalColor,
-                                         padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap',
-                                         background: signalColor + '18', border: '1px solid ' + signalColor + '33' }}>
-                            {signal}
-                          </span>
-                        ) : <span style={{ fontSize: 10, color: '#334155' }}>—</span>}
-                      </td>
-                      <td style={{ padding: '7px 14px', minWidth: 260 }}>
-                        {action && (
-                          <div>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: signalColor, whiteSpace: 'nowrap' }}>
-                              {action}
-                            </span>
-                            <span style={{ fontSize: 10, color: '#475569', marginLeft: 6 }}>
-                              {reason}
-                            </span>
-                          </div>
-                        )}
-                        {!action && <span style={{ fontSize: 10, color: '#334155' }}>—</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p style={{ fontSize: 9, color: '#334155', margin: '8px 0 0' }}>
-            Price ↑↓ green/red · CE IV ↑ red (expensive) ↓ green (cheaper) · PE IV ↑ red (expensive) ↓ green (cheaper)
-          </p>
         </div>
       )}
 
@@ -1777,6 +1661,298 @@ function TopStrikesSection(props) {
     </div>
   );
 }
+function PreTradeModal(props) {
+  var data     = props.data     || {};
+  var overview = props.overview || {};
+  var symbol   = props.symbol   || 'NIFTY';
+  var onClose  = props.onClose;
+
+  // 9 indices — each gets its own mini chart widget injected into its ref
+  var indices = [
+    { sym: 'FOREXCOM:SPX500', label: 'S&P 500',     group: 'US' },
+    { sym: 'FOREXCOM:DJI',    label: 'Dow Jones',   group: 'US' },
+    { sym: 'FOREXCOM:EU50',   label: 'EU Stoxx 50', group: 'Europe' },
+    { sym: 'SPREADEX:FTSE',   label: 'FTSE 100',    group: 'Europe' },
+  ];
+
+  var chartRefs = React.useRef([]);
+
+  React.useEffect(function() {
+    indices.forEach(function(idx, i) {
+      var el = chartRefs.current[i];
+      if (!el) return;
+      el.innerHTML = '';
+      var container = document.createElement('div');
+      container.className = 'tradingview-widget-container';
+      container.style.height = '100%';
+      var inner = document.createElement('div');
+      inner.className = 'tradingview-widget-container__widget';
+      inner.style.height = '100%';
+      container.appendChild(inner);
+      var script = document.createElement('script');
+      script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+      script.async = true;
+      script.innerHTML = JSON.stringify({
+        symbol:           idx.sym,
+        interval:         '15',
+        timezone:         'Asia/Kolkata',
+        theme:            'dark',
+        style:            '1',
+        locale:           'en',
+        toolbar_bg:       '#0a1628',
+        enable_publishing: false,
+        hide_top_toolbar: true,
+        hide_legend:      true,
+        save_image:       false,
+        container_id:     'tv_' + i,
+        width:            '100%',
+        height:           220,
+        isTransparent:    true,
+        backgroundColor:  'rgba(10,22,40,0)',
+        gridColor:        'rgba(30,41,59,0.5)',
+      });
+      container.appendChild(script);
+      el.appendChild(container);
+    });
+  }, []);
+
+  // Derived conditions from existing data
+  var vix       = overview['VIX'] || {};
+  var breadth   = overview['breadth'] || {};
+  var niftyData = overview['NIFTY'] || {};
+
+  var ivHist    = data.iv_history || [];
+  var ivLast    = ivHist.length >= 2 ? ivHist[ivHist.length - 1] : null;
+  var ivPrev    = ivHist.length >= 2 ? ivHist[ivHist.length - 2] : null;
+
+  // PCR COI trend — last 4 readings
+  var pcrHist   = data.pcr_history || [];
+  var pcrLast4  = pcrHist.slice(-4);
+  var pcrNow    = data.pcr_total || 0;
+  var pcrTrend  = pcrLast4.length >= 2
+    ? (pcrLast4[pcrLast4.length-1].pcr > pcrLast4[0].pcr ? 'up' : 'down')
+    : 'flat';
+
+  // IV signal from last snapshot
+  var ivSignal = null;
+  if (ivLast && ivPrev) {
+    var spotUp  = (ivLast.spot || 0) > (ivPrev.spot || 0);
+    var spotDn  = (ivLast.spot || 0) < (ivPrev.spot || 0);
+    var ceUp    = ivLast.ce_iv > ivPrev.ce_iv;
+    var peDn    = ivLast.pe_iv < ivPrev.pe_iv;
+    var peUp    = ivLast.pe_iv > ivPrev.pe_iv;
+    var ceDn    = ivLast.ce_iv < ivPrev.ce_iv;
+    if      (spotUp && ceUp && peDn)  ivSignal = 'BREAKOUT';
+    else if (spotDn && peUp && ceDn)  ivSignal = 'BREAKDOWN';
+    else if (spotUp && ceDn && peUp)  ivSignal = 'TRAP RALLY';
+    else if (spotDn && peDn && ceUp)  ivSignal = 'TRAP FALL';
+    else if (spotUp && ceUp && peUp)  ivSignal = 'CAUTIOUS RALLY';
+    else if (spotDn && peUp && ceUp)  ivSignal = 'CAUTIOUS FALL';
+    else if (spotUp && ceDn && peDn)  ivSignal = 'WEAK RALLY';
+    else if (spotDn && peDn && ceDn)  ivSignal = 'WEAK SELLING';
+  }
+
+  // Expiry days
+  var tDays = data.top_strikes ? data.top_strikes.T_days : null;
+
+  // Condition helpers
+  function condColor(type) {
+    if (type === 'green') return '#4ade80';
+    if (type === 'amber') return '#f59e0b';
+    return '#f87171';
+  }
+  function condBg(type) {
+    if (type === 'green') return 'rgba(74,222,128,0.1)';
+    if (type === 'amber') return 'rgba(245,158,11,0.1)';
+    return 'rgba(248,113,113,0.1)';
+  }
+
+  // VIX condition
+  var vixVal   = vix.last || 0;
+  var vixType  = vixVal === 0 ? 'amber' : vixVal < 13 ? 'green' : vixVal < 20 ? 'amber' : 'red';
+  var vixLabel = vixVal === 0 ? 'No data' : vixVal < 13 ? 'Low fear — options cheap' : vixVal < 20 ? 'Moderate — normal' : 'High fear — options expensive';
+
+  // PCR condition
+  var pcrType  = pcrNow > 1.2 ? 'green' : pcrNow > 0.8 ? 'amber' : 'red';
+  var pcrLabel = (pcrNow > 1.2 ? 'Bullish' : pcrNow > 0.8 ? 'Neutral' : 'Bearish') + ' · PCR ' + pcrNow + ' trending ' + pcrTrend;
+
+  // IV signal condition
+  var ivType  = !ivSignal ? 'amber'
+              : (ivSignal === 'BREAKOUT' || ivSignal === 'BREAKDOWN') ? 'green'
+              : (ivSignal === 'TRAP RALLY' || ivSignal === 'TRAP FALL') ? 'red'
+              : 'amber';
+  var ivLabel = ivSignal || 'Not enough data (need 2+ snapshots)';
+
+  // Breadth condition
+  var adRatio  = breadth.ad_ratio || 0;
+  var breadthType  = adRatio > 2 ? 'green' : adRatio > 0.8 ? 'amber' : 'red';
+  var breadthLabel = breadth.advances
+    ? 'A:' + breadth.advances + ' D:' + breadth.declines + ' · ' + (breadth.breadth || 'Neutral')
+    : 'No data';
+
+  // Expiry condition
+  var expiryType  = tDays === null ? 'amber' : tDays > 5 ? 'green' : tDays > 1 ? 'amber' : 'red';
+  var expiryLabel = tDays === null ? 'Unknown'
+                  : tDays > 5 ? tDays + ' days to expiry — theta manageable'
+                  : tDays > 1 ? tDays + ' days — theta accelerating, reduce size'
+                  : 'Expiry day / tomorrow — extreme theta risk';
+
+  // VWAP condition (from nifty overview)
+  var niftyLast  = niftyData.last || 0;
+  var niftyHigh  = niftyData.high || 0;
+  var niftyLow   = niftyData.low  || 0;
+  var vwapApprox = niftyHigh > 0 && niftyLow > 0 ? Math.round((niftyHigh + niftyLow + niftyLast) / 3) : 0;
+  var vwapType   = vwapApprox === 0 ? 'amber' : niftyLast > vwapApprox ? 'green' : niftyLast < vwapApprox ? 'red' : 'amber';
+  var vwapLabel  = vwapApprox > 0
+    ? 'Spot ' + niftyLast + ' vs approx VWAP ' + vwapApprox + (niftyLast > vwapApprox ? ' — above VWAP' : ' — below VWAP')
+    : 'Use Futures Dashboard for accurate VWAP';
+
+  var conditions = [
+    { label: 'India VIX',       type: vixType,     value: vixVal > 0 ? vixVal : '—',    detail: vixLabel },
+    { label: 'PCR (OI)',        type: pcrType,      value: pcrNow || '—',                detail: pcrLabel },
+    { label: 'IV Signal',       type: ivType,       value: ivSignal || '—',              detail: ivLabel },
+    { label: 'Market Breadth',  type: breadthType,  value: adRatio > 0 ? adRatio + 'x' : '—', detail: breadthLabel },
+    { label: 'VWAP Position',   type: vwapType,     value: niftyLast > vwapApprox ? 'Above' : niftyLast < vwapApprox ? 'Below' : '—', detail: vwapLabel },
+    { label: 'Expiry Risk',     type: expiryType,   value: tDays !== null ? tDays + 'd' : '—', detail: expiryLabel },
+  ];
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.75)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 16,
+    }}
+    onClick={function(e) { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{
+        background: '#0f172a', border: '1px solid #334155', borderRadius: 16,
+        width: '98vw', maxWidth: 1600, maxHeight: '95vh', overflowY: 'auto',
+      }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '16px 20px', borderBottom: '1px solid #1e293b' }}>
+          <div>
+            <p style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>⚡ Pre-Trade Check — {symbol}</p>
+            <p style={{ fontSize: 11, color: '#475569', margin: '3px 0 0' }}>Verify before entering. Click outside to close.</p>
+          </div>
+          <button onClick={onClose}
+            style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+                     padding: '6px 14px', color: '#94a3b8', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+            ✕ Close
+          </button>
+        </div>
+
+        {/* Global Indices — TradingView Mini Charts */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 4px',
+                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Global Markets — Live Intraday Charts
+          </p>
+          <p style={{ fontSize: 10, color: '#334155', margin: '0 0 12px' }}>
+            GIFT Nifty most relevant pre-market · During trading hours focus on S&P 500 + DAX direction
+          </p>
+          {['US', 'Europe'].map(function(group) {
+            return (
+              <div key={group} style={{ marginBottom: 12 }}>
+                <p style={{ fontSize: 10, fontWeight: 700, color: '#475569', margin: '0 0 8px',
+                             textTransform: 'uppercase', letterSpacing: '0.06em' }}>{group}</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                  {indices.filter(function(idx) { return idx.group === group; }).map(function(idx, i) {
+                    var globalIdx = indices.findIndex(function(x) { return x.sym === idx.sym; });
+                    return (
+                      <div key={idx.sym} style={{ background: '#0a1628', borderRadius: 8,
+                                                   border: '1px solid #1e293b', overflow: 'hidden' }}>
+                        <p style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8',
+                                     margin: 0, padding: '6px 10px 0', textAlign: 'center' }}>
+                          {idx.label}
+                        </p>
+                        <div ref={function(el) { chartRefs.current[globalIdx] = el; }}
+                             style={{ height: 220 }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Conditions grid */}
+        <div style={{ padding: '14px 20px' }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 12px',
+                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Market Conditions — from your live data
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+            {conditions.map(function(c, i) {
+              var col = condColor(c.type);
+              var bg  = condBg(c.type);
+              return (
+                <div key={i} style={{ background: bg, border: '1px solid ' + col + '33',
+                                      borderLeft: '3px solid ' + col, borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {c.label}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: col }}>{c.value}</span>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0, lineHeight: 1.5 }}>{c.detail}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Quick decision guide */}
+          <div style={{ marginTop: 14, padding: '10px 14px', background: '#1e293b', borderRadius: 8,
+                        border: '1px solid #334155', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Quick guide</span>
+            <span style={{ fontSize: 11, color: '#4ade80' }}>🟢 5+ green → full size</span>
+            <span style={{ fontSize: 11, color: '#f59e0b' }}>🟡 3-4 green → half size</span>
+            <span style={{ fontSize: 11, color: '#f87171' }}>🔴 &lt;3 green → wait</span>
+            <span style={{ fontSize: 11, color: '#475569' }}>IV Signal TRAP → do not trade</span>
+          </div>
+        </div>
+
+        {/* X / Twitter — Quick Links */}
+        <div style={{ padding: '14px 20px', borderTop: '1px solid #1e293b' }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 12px',
+                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Market Feeds — Open on X
+          </p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {[
+              { handle: 'RedboxWire',     label: 'Redbox Wire',        desc: 'Breaking macro news' },
+              { handle: 'markets',        label: 'Bloomberg Markets',   desc: 'Bloomberg live updates' },
+              { handle: 'KobeissiLetter', label: 'Kobeissi Letter',    desc: 'Market flows + data' },
+              { handle: 'zerohedge',      label: 'ZeroHedge',          desc: 'Market commentary' },
+              { handle: 'elerianm',       label: 'Mohamed El-Erian',   desc: 'Fed, rates, macro' },
+              { handle: 'unusual_whales', label: 'Unusual Whales',     desc: 'Options flow' },
+            ].map(function(feed) {
+              return (
+                <a key={feed.handle}
+                   href={'https://x.com/' + feed.handle}
+                   target="_blank" rel="noreferrer"
+                   style={{ display: 'flex', flexDirection: 'column', gap: 2,
+                            padding: '10px 14px', background: '#1e293b',
+                            border: '1px solid #334155', borderRadius: 8,
+                            textDecoration: 'none', minWidth: 160, flex: 1,
+                            transition: 'border-color 0.15s', cursor: 'pointer' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#60a5fa' }}>@{feed.handle}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#f1f5f9' }}>{feed.label}</span>
+                  <span style={{ fontSize: 10, color: '#475569' }}>{feed.desc}</span>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 export default function Options() {
   var { user }  = useAuth();
   var navigate  = useNavigate();
@@ -1786,6 +1962,7 @@ export default function Options() {
   var [overview, setOverview]     = useState({});
   var [loading, setLoading]       = useState(false);
   var [lastUpdate, setLastUpdate] = useState(null);
+  var [showPreTrade, setShowPreTrade] = useState(false);
   var intervalRef                 = useRef(null);
   var overviewRef                 = useRef(null);
   var prevPCRRef                  = useRef({});
@@ -1885,6 +2062,13 @@ export default function Options() {
               {lastUpdate ? 'Updated ' + lastUpdate : loading ? 'Loading...' : 'Waiting'}
             </span>
           </div>
+          <button
+            onClick={function() { setShowPreTrade(true); }}
+            style={{ background: '#7c3aed', border: '1px solid #7c3aed', borderRadius: 8, padding: '6px 16px',
+                     color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.02em' }}
+          >
+            ⚡ Pre-Trade Check
+          </button>
           <button
             onClick={function() { navigate('/option-chain'); }}
             style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: '6px 14px', color: '#94a3b8', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
@@ -1993,6 +2177,15 @@ export default function Options() {
           </div>
 
         </div>
+      )}
+
+      {showPreTrade && (
+        <PreTradeModal
+          data={data}
+          overview={overview}
+          symbol={symbol}
+          onClose={function() { setShowPreTrade(false); }}
+        />
       )}
     </div>
   );
