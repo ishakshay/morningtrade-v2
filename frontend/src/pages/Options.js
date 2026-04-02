@@ -667,7 +667,6 @@ function IVDashboard(props) {
   var hasPremium = ceLtpNow > 0 && peLtpNow > 0;
 
   // Last 6 history reversed (newest first)
-  var last6 = history.slice(-6).reverse();
 
   // IV chart SVG
   var ceVals  = history.map(function(h) { return h.ce_iv || 0; });
@@ -754,7 +753,6 @@ function IVDashboard(props) {
     return lines;
   }
 
-  var decisions = getDecision();
 
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
@@ -1094,7 +1092,6 @@ function OIBar(props) {
 
 function FiveStrikeTable(props) {
   var rows            = props.rows            || [];
-  var pcr             = props.pcr             || 0;
   var sentiment       = props.sentiment       || 'Neutral';
   var ceCOI           = props.ceCOI           || 0;
   var peCOI           = props.peCOI           || 0;
@@ -1158,7 +1155,6 @@ function FiveStrikeTable(props) {
   var cePct   = Math.round((Math.abs(totalCE) / total) * 100);
   var pePct   = 100 - cePct;
 
-  var last12 = history.slice(-12);
 
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
@@ -1248,7 +1244,6 @@ function FiveStrikeTable(props) {
             {rows.map(function(row) {
               var isATM  = row.is_atm;
               var rowBg  = isATM ? 'rgba(96,165,250,0.1)' : 'transparent';
-              var pcrCol = pcrColor(row.pcr_coi);
 
               var volDiff  = (row.pe_vol || 0) - (row.ce_vol || 0);
               var volTotal = (row.pe_vol || 0) + (row.ce_vol || 0);
@@ -1757,7 +1752,7 @@ function PreTradeModal(props) {
       container.appendChild(script);
       el.appendChild(container);
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derived conditions from existing data
   var vix       = overview['VIX'] || {};
@@ -1853,20 +1848,11 @@ function PreTradeModal(props) {
   var crude      = overview['CRUDE'] || {};
   var crudeVal   = crude.last || 0;
   var crudeChg   = crude.pct_change || 0;
-  var crudeType  = crudeVal === 0 ? 'amber' : crudeChg > 2 ? 'red' : crudeChg < -2 ? 'green' : 'amber';
   var crudeLabel = crudeVal > 0
     ? '$' + crudeVal + ' · ' + (crudeChg > 0 ? '+' : '') + crudeChg + '% · '
       + (crudeChg > 2 ? 'Sharp rise — inflation risk for India' : crudeChg < -2 ? 'Falling — positive for India' : 'Stable — neutral')
     : 'No data';
 
-  var conditions = [
-    { label: 'India VIX',       type: vixType,     value: vixVal > 0 ? vixVal : '—',    detail: vixLabel },
-    { label: 'PCR (OI)',        type: pcrType,      value: pcrNow || '—',                detail: pcrLabel },
-    { label: 'IV Signal',       type: ivType,       value: ivSignal || '—',              detail: ivLabel },
-    { label: 'Market Breadth',  type: breadthType,  value: adRatio > 0 ? adRatio + 'x' : '—', detail: breadthLabel },
-    { label: 'VWAP Position',   type: vwapType,     value: niftyLast > vwapApprox ? 'Above' : niftyLast < vwapApprox ? 'Below' : '—', detail: vwapLabel },
-    { label: 'Expiry Risk',     type: expiryType,   value: tDays !== null ? tDays + 'd' : '—', detail: expiryLabel },
-  ];
 
   return (
     <div style={{
@@ -2132,9 +2118,6 @@ function PreTradeModal(props) {
           var todayStr = today.toISOString().split('T')[0];
 
           // IST offset = +5:30
-          function toIST(dateStr, timeIST) {
-            return dateStr + ' ' + timeIST + ' IST';
-          }
 
           // Known high-impact events for India — updated for 2026
           // F&O expiry = every Thursday, monthly = last Thursday
@@ -2369,8 +2352,8 @@ export default function Options() {
   var { user }  = useAuth();
   var navigate  = useNavigate();
   var [symbol, setSymbol]         = useState('NIFTY');
+  var [bnData, setBnData]         = useState(null); // eslint-disable-line no-unused-vars
   var [data, setData]             = useState(null);
-  var [bnData, setBnData]         = useState(null);
   var [overview, setOverview]     = useState({});
   var [loading, setLoading]       = useState(false);
   var [lastUpdate, setLastUpdate] = useState(null);
