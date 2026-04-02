@@ -2348,6 +2348,377 @@ function PreTradeModal(props) {
   );
 }
 
+
+// ── OI Zone Analysis (ATM ±7 = 15 strikes) ──────────────────────────────────
+function ZoneSplit(props) {
+  var chain  = props.chain  || [];
+  var atm    = props.atm    || 0;
+  var symbol = props.symbol || 'NIFTY';
+  var step   = symbol === 'BANKNIFTY' ? 100 : 50;
+
+  if (!chain.length || !atm) return null;
+
+  // 5 zones using ATM ±7 chain (15 strikes)
+  // Deep OTM: ±6-7 (2 each side = 4 strikes)
+  // OTM:      ±3-5 (3 each side = 6 strikes)
+  // ATM:      ±0-2 (5 strikes)
+  var zoneDefs = [
+    { key: 'deep_ce', label: 'Deep OTM Calls', sub: 'ATM +6 to +7 · 2 strikes', side: 'ce', minD: 6, maxD: 7, dir:  1 },
+    { key: 'otm_ce',  label: 'OTM Calls',      sub: 'ATM +3 to +5 · 3 strikes', side: 'ce', minD: 3, maxD: 5, dir:  1 },
+    { key: 'atm',     label: 'ATM Zone',        sub: 'ATM ±2 · 5 strikes',       side: 'both', minD: 0, maxD: 2, dir: 0 },
+    { key: 'otm_pe',  label: 'OTM Puts',        sub: 'ATM -3 to -5 · 3 strikes', side: 'pe', minD: 3, maxD: 5, dir: -1 },
+    { key: 'deep_pe', label: 'Deep OTM Puts',   sub: 'ATM -6 to -7 · 2 strikes', side: 'pe', minD: 6, maxD: 7, dir: -1 },
+  ];
+
+  function getRows(minD, maxD, dir) {
+    return chain.filter(function(r) {
+      var dist = Math.abs(r.strike - atm) / step;
+      return dist >= minD && dist <= maxD &&
+        (dir === 0 || (dir > 0 && r.strike > atm) || (dir < 0 && r.strike < atm));
+    });
+  }
+
+  function sumSide(rows, side) {
+    var oi  = rows.reduce(function(s,r) { return s + (side==='ce' ? (r.ce_oi||0) : side==='pe' ? (r.pe_oi||0) : (r.ce_oi||0)+(r.pe_oi||0)); }, 0);
+    var coi = rows.reduce(function(s,r) { return s + (side==='ce' ? (r.ce_chg_oi||0) : side==='pe' ? (r.pe_chg_oi||0) : (r.ce_chg_oi||0)+(r.pe_chg_oi||0)); }, 0);
+    return { oi: oi, coi: coi, count: rows.length };
+  }
+
+  function fmtN(n) {
+    var a=Math.abs(n), sg=n<0?'-':'+';
+    if(a>=10000000) return sg+(a/10000000).toFixed(1)+'Cr';
+    if(a>=100000)   return sg+(a/100000).toFixed(1)+'L';
+    if(a>=1000)     return sg+(a/1000).toFixed(0)+'K';
+    return sg+a;
+  }
+  function fmtAbs(n) {
+    if(n>=10000000) return (n/10000000).toFixed(1)+'Cr';
+    if(n>=100000)   return (n/100000).toFixed(1)+'L';
+    if(n>=1000)     return (n/1000).toFixed(0)+'K';
+    return n;
+  }
+  function arrow(coi, isDeep) {
+    var th = isDeep ? 100000 : 250000;
+    if(coi > th*2) return '↑↑'; if(coi > th) return '↑';
+    if(coi < -th*2) return '↓↓'; if(coi < -th) return '↓';
+    return '→';
+  }
+  function arrowCol(coi, side) {
+    var up=coi>0, dn=coi<0;
+    return side==='ce' ? (up?'#f87171':dn?'#4ade80':'#475569') : (up?'#4ade80':dn?'#f87171':'#475569');
+  }
+
+  var zData = zoneDefs.map(function(z) {
+    var rows = getRows(z.minD, z.maxD, z.dir);
+    return {
+      z:    z,
+      ce:   (z.side==='pe')   ? null : sumSide(rows, 'ce'),
+      pe:   (z.side==='ce')   ? null : sumSide(rows, 'pe'),
+      both: (z.side==='both') ? sumSide(rows, 'both') : null,
+    };
+  });
+
+  // Reading logic
+  var deepCeCOI = zData[0].ce ? zData[0].ce.coi : 0;
+  var otmCeCOI  = zData[1].ce ? zData[1].ce.coi : 0;
+  var otmPeCOI  = zData[3].pe ? zData[3].pe.coi : 0;
+  var deepPeCOI = zData[4].pe ? zData[4].pe.coi : 0;
+
+  var reading, rCol, rDesc;
+  if (otmCeCOI < -200000 && otmPeCOI > 200000) {
+    reading='⚡ BREAKOUT SETUP'; rCol='#4ade80';
+    rDesc='Call writers covering resistance + put writers building support. Institutions positioning for upside. Consider buying calls on pullback to VWAP.';
+  } else if (otmPeCOI < -200000 && otmCeCOI > 200000) {
+    reading='⚡ BREAKDOWN SETUP'; rCol='#f87171';
+    rDesc='Put writers abandoning support + call writers reinforcing resistance. Institutions positioning for downside. Consider buying puts on bounce to VWAP.';
+  } else if (otmCeCOI > 200000 && otmPeCOI > 200000) {
+    reading='↔ RANGE BOUND'; rCol='#f59e0b';
+    rDesc='Institutions selling both OTM calls and puts — they expect no major move. Avoid directional bets, this favors option sellers.';
+  } else if (deepCeCOI > 100000 && otmCeCOI < 0) {
+    reading='🟣 SPECULATIVE CALL BUYING'; rCol='#a78bfa';
+    rDesc='Deep OTM call buying while OTM resistance crumbling. Speculative bullish bet — momentum trade possible with confirmation.';
+  } else if (deepPeCOI > 100000 && otmPeCOI < 0) {
+    reading='🟣 SPECULATIVE PUT BUYING'; rCol='#a78bfa';
+    rDesc='Deep OTM put buying while OTM support crumbling. Speculative bearish bet — momentum short possible with confirmation.';
+  } else if (otmCeCOI > 200000) {
+    reading='🔴 RESISTANCE BUILDING'; rCol='#f87171';
+    rDesc='OTM call writers reinforcing ceiling. Upside capped until CE COI starts unwinding. Sell calls at resistance or wait for unwind.';
+  } else if (otmPeCOI > 200000) {
+    reading='🟢 SUPPORT BUILDING'; rCol='#4ade80';
+    rDesc='OTM put writers reinforcing floor. Downside protected. Buy dips near support level.';
+  } else {
+    reading='NEUTRAL'; rCol='#64748b';
+    rDesc='No clear institutional signal. Zones are balanced — wait for a clear directional setup before entering.';
+  }
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid #1e293b' }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0,
+                     textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          OI Zone Analysis — {symbol} @ {atm} · ATM ±7 (15 strikes)
+        </p>
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: '#1e293b' }}>
+              <th style={{ padding: '7px 12px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>CE OI</th>
+              <th style={{ padding: '7px 10px', color: '#f87171', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>CE COI</th>
+              <th style={{ padding: '7px 6px',  color: '#f87171', textAlign: 'center', fontWeight: 600 }}>CE ↕</th>
+              <th style={{ padding: '7px 20px', color: '#f1f5f9', textAlign: 'center', fontWeight: 700 }}>Zone</th>
+              <th style={{ padding: '7px 6px',  color: '#4ade80', textAlign: 'center', fontWeight: 600 }}>PE ↕</th>
+              <th style={{ padding: '7px 10px', color: '#4ade80', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>PE COI</th>
+              <th style={{ padding: '7px 12px', color: '#4ade80', textAlign: 'left',  fontWeight: 600, whiteSpace: 'nowrap' }}>PE OI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {zData.map(function(zd, i) {
+              var isAtm  = zd.z.key === 'atm';
+              var isDeep = zd.z.key === 'deep_ce' || zd.z.key === 'deep_pe';
+              var bg     = isAtm ? 'rgba(96,165,250,0.07)' : 'transparent';
+              var ceC    = zd.ce   ? zd.ce.coi   : zd.both ? zd.both.coi : null;
+              var peC    = zd.pe   ? zd.pe.coi   : zd.both ? zd.both.coi : null;
+              var ceOI   = zd.ce   ? zd.ce.oi    : zd.both ? zd.both.oi  : null;
+              var peOI   = zd.pe   ? zd.pe.oi    : zd.both ? zd.both.oi  : null;
+              return (
+                <tr key={i} style={{ background: bg, borderBottom: '1px solid #1e293b22' }}>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: '#f87171', fontWeight: 600 }}>
+                    {ceOI != null ? fmtAbs(ceOI) : '—'}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600,
+                               color: ceC!=null ? (ceC>0?'#f87171':ceC<0?'#4ade80':'#64748b') : '#334155' }}>
+                    {ceC != null ? fmtN(ceC) : '—'}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                    {ceC != null && <span style={{ fontSize: 14, fontWeight: 800, color: arrowCol(ceC,'ce') }}>{arrow(ceC,isDeep)}</span>}
+                  </td>
+                  <td style={{ padding: '8px 20px', textAlign: 'center' }}>
+                    <span style={{ fontSize: isAtm?12:11, fontWeight: isAtm?700:500, color: isAtm?'#60a5fa':'#94a3b8' }}>
+                      {zd.z.label}
+                    </span>
+                    <span style={{ display: 'block', fontSize: 9, color: '#334155' }}>{zd.z.sub}</span>
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                    {peC != null && <span style={{ fontSize: 14, fontWeight: 800, color: arrowCol(peC,'pe') }}>{arrow(peC,isDeep)}</span>}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600,
+                               color: peC!=null ? (peC>0?'#4ade80':peC<0?'#f87171':'#64748b') : '#334155' }}>
+                    {peC != null ? fmtN(peC) : '—'}
+                  </td>
+                  <td style={{ padding: '8px 12px', textAlign: 'left', color: '#4ade80', fontWeight: 600 }}>
+                    {peOI != null ? fmtAbs(peOI) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Reading */}
+      <div style={{ padding: '10px 20px', background: rCol+'08', borderTop: '1px solid #1e293b',
+                    borderLeft: '3px solid ' + rCol }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: rCol }}>{reading}</span>
+        <p style={{ fontSize: 11, color: '#94a3b8', margin: '4px 0 0', lineHeight: 1.6 }}>{rDesc}</p>
+      </div>
+
+      <div style={{ padding: '6px 20px', fontSize: 9, color: '#334155' }}>
+        CE ↑ red = call writing (resistance) · CE ↓ green = call unwind (bullish) · PE ↑ green = put writing (support) · PE ↓ red = put unwind (bearish) · ↑↑/↓↓ = strong sustained move
+      </div>
+    </div>
+  );
+}
+
+
+// ── Alert System ─────────────────────────────────────────────────────────────
+function AlertSystem(props) {
+  var chain       = props.chain       || [];
+  var chainBN     = props.chainBN     || [];
+  var atmNifty    = props.atmNifty    || 0;
+  var atmBN       = props.atmBN       || 0;
+  var prevChain   = props.prevChain   || [];
+  var prevChainBN = props.prevChainBN || [];
+  var alerts      = props.alerts      || [];
+  var onAlerts    = props.onAlerts;
+  var onClear     = props.onClear;
+  var [open, setOpen]   = React.useState(false);
+  var [toast, setToast] = React.useState(null);
+
+  function zoneCOI(ch, atm, stp, minD, maxD, dir, side) {
+    return ch.filter(function(r) {
+      var d = Math.abs(r.strike - atm) / stp;
+      return d >= minD && d <= maxD &&
+        (dir === 0 || (dir > 0 && r.strike > atm) || (dir < 0 && r.strike < atm));
+    }).reduce(function(s, r) {
+      return s + (side === 'ce' ? (r.ce_chg_oi||0) : (r.pe_chg_oi||0));
+    }, 0);
+  }
+
+  function runAlerts(ch, prev, atm, stp, sym) {
+    if (!ch.length || !prev.length || !atm) return [];
+    var now     = new Date();
+    var timeStr = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+    var th      = stp === 100 ? 600000 : 300000;
+    var fired   = [];
+
+    var checks = [
+      { minD:6, maxD:7, dir: 1, side:'ce', name:'Deep OTM CE' },
+      { minD:3, maxD:5, dir: 1, side:'ce', name:'OTM CE'      },
+      { minD:3, maxD:5, dir:-1, side:'pe', name:'OTM PE'      },
+      { minD:6, maxD:7, dir:-1, side:'pe', name:'Deep OTM PE' },
+    ];
+
+    checks.forEach(function(c) {
+      var nowV  = zoneCOI(ch,   atm, stp, c.minD, c.maxD, c.dir, c.side);
+      var prevV = zoneCOI(prev, atm, stp, c.minD, c.maxD, c.dir, c.side);
+      var delta = nowV - prevV;
+      if (Math.abs(delta) < th) return;
+
+      var isCE = c.side === 'ce', isDeep = c.minD === 6, isUp = delta > 0;
+      var conf  = Math.abs(delta) > th*3 ? 'HIGH' : Math.abs(delta) > th*1.5 ? 'MEDIUM' : 'LOW';
+      var confCol = conf==='HIGH' ? '#4ade80' : conf==='MEDIUM' ? '#f59e0b' : '#64748b';
+
+      var type, emoji, desc;
+      if (isCE && isUp && isDeep)  { type='DEEP OTM SPEC CALLS';  emoji='🟣'; desc='Deep OTM call buying surge — speculative bullish bet, big move possible'; }
+      else if (isCE && isUp)       { type='RESISTANCE BUILDING';   emoji='🔴'; desc='OTM call writing surge — institutions capping upside at ' + sym; }
+      else if (isCE)               { type='RESISTANCE CRUMBLING';  emoji='🟢'; desc='Call writers exiting — ceiling breaking, possible breakout signal'; }
+      else if (!isCE && isUp && isDeep) { type='DEEP OTM SPEC PUTS'; emoji='🟣'; desc='Deep OTM put buying surge — speculative bearish bet, big move possible'; }
+      else if (!isCE && isUp)      { type='SUPPORT BUILDING';      emoji='🟢'; desc='OTM put writing surge — institutions building floor at ' + sym; }
+      else                         { type='SUPPORT CRUMBLING';     emoji='🔴'; desc='Put writers exiting — floor breaking, possible breakdown signal'; }
+
+      var f = function(n) { var a=Math.abs(n); return (n>0?'+':'')+(a>=100000?(a/100000).toFixed(1)+'L':a>=1000?(a/1000).toFixed(0)+'K':a); };
+      fired.push({ id: Date.now()+Math.random(), time: timeStr, symbol: sym, type: type, emoji: emoji,
+                   desc: desc, zone: c.name, delta: f(delta), conf: conf, confCol: confCol });
+    });
+    return fired;
+  }
+
+  React.useEffect(function() {
+    var fired = [];
+    fired = fired.concat(runAlerts(chain,   prevChain,   atmNifty, 50,  'NIFTY'));
+    fired = fired.concat(runAlerts(chainBN, prevChainBN, atmBN,    100, 'BANKNIFTY'));
+    if (fired.length) {
+      onAlerts && onAlerts(fired);
+      setToast(fired[0]);
+      var t = setTimeout(function() { setToast(null); }, 8000);
+      return function() { clearTimeout(t); };
+    }
+  }, [chain, chainBN]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  var alertBtn = (
+    <button onClick={function() { setOpen(true); }}
+      style={{ background: '#1e293b', border: '1px solid ' + (alerts.length ? '#f59e0b' : '#334155'),
+               borderRadius: 8, padding: '6px 14px', color: alerts.length ? '#f59e0b' : '#64748b',
+               fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+      🔔 Alerts
+      {alerts.length > 0 && (
+        <span style={{ background: '#f59e0b', color: '#0f172a', borderRadius: 10, padding: '1px 6px', fontSize: 10, fontWeight: 800 }}>
+          {alerts.length}
+        </span>
+      )}
+    </button>
+  );
+
+  return (
+    <>
+      {/* Toast popup */}
+      {toast && (
+        <div onClick={function() { setOpen(true); setToast(null); }}
+          style={{ position: 'fixed', top: 80, right: 20, zIndex: 2000, cursor: 'pointer', maxWidth: 360,
+                   background: '#1e293b', border: '1px solid #334155', borderLeft: '3px solid ' + toast.confCol,
+                   borderRadius: 10, padding: '12px 16px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                <span>{toast.emoji}</span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: toast.confCol }}>{toast.type}</span>
+                <span style={{ fontSize: 10, color: '#475569' }}>{toast.symbol} · {toast.time}</span>
+              </div>
+              <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 4px', lineHeight: 1.4 }}>{toast.desc}</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: toast.confCol }}>{toast.conf}</span>
+                <span style={{ fontSize: 9, color: '#475569' }}>COI Δ {toast.delta}</span>
+                <span style={{ fontSize: 9, color: '#475569' }}>{toast.zone}</span>
+              </div>
+            </div>
+            <button onClick={function(e) { e.stopPropagation(); setToast(null); }}
+              style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }}>✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* Drawer */}
+      {open && (
+        <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 420, zIndex: 1500,
+                      background: '#0f172a', borderLeft: '1px solid #334155',
+                      display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.6)' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #1e293b',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>🔔 Alert Log</p>
+              <p style={{ fontSize: 10, color: '#475569', margin: '2px 0 0' }}>NIFTY + BANKNIFTY · Today · {alerts.length} alerts</p>
+            </div>
+            <button onClick={function() { setOpen(false); }}
+              style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+                       padding: '6px 12px', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}>✕ Close</button>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+            {alerts.length === 0 ? (
+              <p style={{ color: '#475569', fontSize: 12, textAlign: 'center', marginTop: 40 }}>No alerts yet today</p>
+            ) : alerts.map(function(a) {
+              return (
+                <div key={a.id} style={{ marginBottom: 10, padding: '10px 14px', background: '#1e293b',
+                                          border: '1px solid #334155', borderLeft: '3px solid ' + a.confCol, borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span>{a.emoji}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: a.confCol }}>{a.type}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <span style={{ fontSize: 9, color: '#60a5fa', fontWeight: 600 }}>{a.symbol}</span>
+                      <span style={{ fontSize: 9, color: '#475569' }}>{a.time}</span>
+                    </div>
+                  </div>
+                  <p style={{ fontSize: 10, color: '#94a3b8', margin: '0 0 4px', lineHeight: 1.5 }}>{a.desc}</p>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: a.confCol }}>{a.conf}</span>
+                    <span style={{ fontSize: 9, color: '#475569' }}>Zone: {a.zone}</span>
+                    <span style={{ fontSize: 9, color: '#475569' }}>Δ {a.delta}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ padding: '12px 16px', borderTop: '1px solid #1e293b', display: 'flex', gap: 8 }}>
+            <button onClick={function() {
+              if (!alerts.length) return;
+              var csv = 'Time,Symbol,Alert,Confidence,Zone,Delta,Description\n' +
+                alerts.map(function(a) { return [a.time,a.symbol,a.type,a.conf,a.zone,a.delta,'"'+a.desc+'"'].join(','); }).join('\n');
+              var blob = new Blob([csv], {type:'text/csv'});
+              var url  = URL.createObjectURL(blob);
+              var el   = document.createElement('a'); el.href=url; el.download='alerts_'+new Date().toISOString().slice(0,10)+'.csv'; el.click();
+            }} style={{ flex:1, padding:'8px', background:'#1e293b', border:'1px solid #334155',
+                        borderRadius:8, color:'#94a3b8', cursor:'pointer', fontSize:11, fontWeight:600 }}>
+              📥 Export CSV
+            </button>
+            <button onClick={function() { onClear && onClear(); }}
+              style={{ flex:1, padding:'8px', background:'#1e293b', border:'1px solid #334155',
+                       borderRadius:8, color:'#f87171', cursor:'pointer', fontSize:11, fontWeight:600 }}>
+              🗑 Clear All
+            </button>
+          </div>
+        </div>
+      )}
+
+      {alertBtn}
+    </>
+  );
+}
+
 export default function Options() {
   var { user }  = useAuth();
   var navigate  = useNavigate();
@@ -2358,6 +2729,9 @@ export default function Options() {
   var [loading, setLoading]       = useState(false);
   var [lastUpdate, setLastUpdate] = useState(null);
   var [showPreTrade, setShowPreTrade] = useState(false);
+  var [alerts, setAlerts]             = useState([]);
+  var prevChainRef   = useRef([]);
+  var prevChainBNRef = useRef([]);
   var intervalRef                 = useRef(null);
   var overviewRef                 = useRef(null);
   var prevPCRRef                  = useRef({});
@@ -2388,6 +2762,8 @@ export default function Options() {
                 pcr_5strike: prev.pcr_5strike,
               };
             }
+            if (sym === 'NIFTY'     && prev && prev.chain) prevChainRef.current   = prev.chain;
+            if (sym === 'BANKNIFTY' && prev && prev.chain) prevChainBNRef.current = prev.chain;
             return d;
           });
           setLoading(false);
@@ -2464,6 +2840,17 @@ export default function Options() {
           >
             ⚡ Pre-Trade Check
           </button>
+          <AlertSystem
+            chain={data ? (data.chain || []) : []}
+            chainBN={bnData ? (bnData.chain || []) : []}
+            atmNifty={data ? (data.atm_strike || 0) : 0}
+            atmBN={bnData ? (bnData.atm_strike || 0) : 0}
+            prevChain={prevChainRef.current}
+            prevChainBN={prevChainBNRef.current}
+            alerts={alerts}
+            onAlerts={function(fired) { setAlerts(function(prev) { return fired.concat(prev); }); }}
+            onClear={function() { setAlerts([]); }}
+          />
           <button
             onClick={function() { navigate('/option-chain'); }}
             style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: '6px 14px', color: '#94a3b8', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
@@ -2543,6 +2930,12 @@ export default function Options() {
           )}
 
           <OIBar data={data} />
+          <ZoneSplit
+            chain={data.chain || []}
+            atm={data.atm_strike || 0}
+            symbol={symbol}
+          />
+
           <FiveStrikeTable
             rows={data.five_strike_rows || []}
             pcr={data.pcr_5strike || 0}

@@ -118,6 +118,95 @@ function FuturesCard(props) {
   );
 }
 
+
+function BasisTracker(props) {
+  var futures = props.futures || {};
+  var spot    = props.spot    || 0;
+  var tDays   = props.tDays   || 7;
+  var history = props.history || [];
+
+  var futLtp  = futures.fut_ltp || 0;
+  var basis   = (futLtp > 0 && spot > 0) ? Math.round((futLtp - spot) * 100) / 100 : null;
+  var normal  = spot > 0 ? Math.round(spot * 0.065 * tDays / 365) : null;
+  var diff    = (basis != null && normal != null) ? Math.round((basis - normal) * 100) / 100 : null;
+
+  var bCol  = diff == null ? '#64748b' : diff > 20 ? '#4ade80' : diff < -20 ? '#f87171' : '#f59e0b';
+  var bLbl  = diff == null ? 'No data'
+            : diff > 20  ? 'Above normal — institutional futures buying'
+            : diff < -20 ? 'Below normal — institutional selling / hedging'
+            : 'Normal range — cost of carry';
+
+  var trend = history.slice(0, 8).map(function(s) {
+    return (s.price && spot) ? Math.round((s.price - spot) * 10) / 10 : null;
+  }).filter(function(v) { return v !== null; });
+
+  var tDir = trend.length >= 2
+    ? (trend[0] > trend[trend.length-1] + 2 ? 'rising'
+    :  trend[0] < trend[trend.length-1] - 2 ? 'falling' : 'flat')
+    : 'flat';
+  var tDirCol = tDir === 'rising' ? '#4ade80' : tDir === 'falling' ? '#f87171' : '#64748b';
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: '14px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0,
+                     textTransform: 'uppercase', letterSpacing: '0.05em' }}>Futures Basis</p>
+        {diff != null && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: bCol, padding: '2px 8px',
+                         borderRadius: 4, background: bCol + '18', border: '1px solid ' + bCol + '33' }}>
+            {diff > 20 ? 'ABOVE NORMAL' : diff < -20 ? 'BELOW NORMAL' : 'NORMAL'}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 10 }}>
+        {[
+          { label: 'Spot',    val: spot    > 0 ? spot.toLocaleString()   : '—', col: '#f1f5f9' },
+          { label: 'Futures', val: futLtp  > 0 ? futLtp.toLocaleString() : '—', col: '#60a5fa' },
+          { label: 'Basis',   val: basis   != null ? (basis >= 0 ? '+' : '') + basis : '—', col: bCol },
+          { label: 'Normal',  val: normal  != null ? '~+' + normal : '—', col: '#64748b' },
+        ].map(function(s, i) {
+          return (
+            <div key={i}>
+              <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>{s.label}</p>
+              <p style={{ fontSize: 16, fontWeight: 800, color: s.col, margin: 0 }}>{s.val}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 10px', lineHeight: 1.5 }}>{bLbl}</p>
+
+      {trend.length >= 2 && (
+        <div>
+          <p style={{ fontSize: 9, color: '#475569', margin: '0 0 6px', fontWeight: 700, textTransform: 'uppercase' }}>
+            Basis trend &nbsp;
+            <span style={{ color: tDirCol }}>
+              {tDir === 'rising' ? '↑ Rising — institutional buying' : tDir === 'falling' ? '↓ Falling — long unwinding' : '→ Stable'}
+            </span>
+          </p>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {trend.map(function(v, i) {
+              var col = v > (normal||0)+20 ? '#4ade80' : v < (normal||0)-20 ? '#f87171' : '#f59e0b';
+              return (
+                <div key={i} style={{ padding: '4px 8px', background: i===0 ? col+'22' : '#1e293b',
+                                      border: '1px solid ' + (i===0 ? col+'55' : '#334155'), borderRadius: 6, textAlign: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: i===0 ? 800 : 500, color: col }}>{v >= 0 ? '+' : ''}{v}</span>
+                  {i === 0 && <span style={{ display: 'block', fontSize: 8, color: '#4ade80' }}>NOW</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <p style={{ fontSize: 9, color: '#334155', margin: '8px 0 0' }}>
+        Normal = Spot × 6.5% × days-to-expiry / 365 · Above normal = institutional buying · Below normal = hedging · Collapsing trend = unwinding
+      </p>
+    </div>
+  );
+}
+
 function IntradayTable(props) {
   var history = props.history || [];
 
@@ -391,6 +480,8 @@ export default function FuturesDashboard() {
             <span style={{ fontSize: 12, color: '#64748b' }}>VWAP: <b style={{ color: '#60a5fa' }}>{futures.fut_vwap}</b></span>
             <span style={{ marginLeft: 'auto', fontSize: 11, color: '#334155' }}>⏱ {data.timestamp}</span>
           </div>
+
+          <BasisTracker futures={futures} spot={data.spot_price || 0} tDays={data.t_days || 7} history={history} />
 
           {/* PRIMARY: Intraday trend sorted newest first */}
           <IntradayTable history={history} />
