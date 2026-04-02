@@ -9,17 +9,220 @@ import threading
 import json
 import time
 import math
+import os
 import cache
+from datetime import datetime, timezone, timedelta
 
 from screeners import intraday_booster, nr7, top_movers, momentum_spike, indices, sector_scope
 from screeners.base import SYMBOLS, COUNTRY_LABELS
 from screeners.market_session import run as get_all_sessions
 from screeners.nse_options import fetch_option_chain as fetch_options, get_pcr_history, get_full_chain
 from screeners.nse_futures_dashboard import fetch_dashboard as fetch_futures_dashboard
-from screeners.nse_market import get_market_overview
+from screeners.nse_market import get_market_overview, get_iv_history, get_vix_history, get_pcr_intraday
+from screeners.nse_options import get_strike_pcr_history
 from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
 from screeners.nse_futures import poll_futures_sentiment, update_latest, get_latest
 from screeners.nse_gamma import compute_gamma_blast
+
+EOD_EXPORT_DIR = os.path.join(os.path.dirname(__file__), 'eod_exports')
+os.makedirs(EOD_EXPORT_DIR, exist_ok=True)
+
+_eod_exported_today = {'date': None}
+
+def export_eod_spreadsheet():
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        print("  [eod] openpyxl not installed — run: pip install openpyxl")
+        return
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist).strftime('%Y-%m-%d')
+    filename = f'morningtrade_options_{today}.xlsx'
+    filepath = os.path.join(EOD_EXPORT_DIR, filename)
+
+    print(f"\n--- EOD Export: {filename} ---")
+
+    wb = openpyxl.Workbook()
+
+    # ── Styles ────────────────────────────────────────────────────────────────
+    hdr_font    = Font(name='Arial', bold=True, color='FFFFFF', size=10)
+    hdr_fill_ce = PatternFill('solid', start_color='C0392B')   # red for CE
+    hdr_fill_pe = PatternFill('solid', start_color='27AE60')   # green for PE
+    hdr_fill_nt = PatternFill('solid', start_color='2C3E50')   # dark for neutral
+    hdr_fill_vx = PatternFill('solid', start_color='8E44AD')   # purple for VIX
+    center      = Alignment(horizontal='center', vertical='center')
+    left        = Alignment(horizontal='left',   vertical='center')
+    thin        = Side(style='thin', color='DDDDDD')
+    border      = Border(left=thin, right=thin, top=thin, bottom=thin)
+    row_font    = Font(name='Arial', size=9)
+
+    def style_header(cell, fill):
+        cell.font      = hdr_font
+        cell.fill      = fill
+        cell.alignment = center
+        cell.border    = border
+
+    def style_data(cell, align='center'):
+        cell.font      = row_font
+        cell.alignment = center if align == 'center' else left
+        cell.border    = border
+
+    def write_sheet_header(ws, title, headers, fills):
+        ws.append([title])
+        ws['A1'].font = Font(name='Arial', bold=True, size=12)
+        ws['A1'].fill = PatternFill('solid', start_color='1A252F')
+        ws['A1'].font = Font(name='Arial', bold=True, size=12, color='FFFFFF')
+        ws.append([])
+        ws.append(headers)
+        for col_idx, fill in enumerate(fills, 1):
+            cell = ws.cell(row=3, column=col_idx)
+            style_header(cell, fill)
+
+    # ── Sheet 1: IV History — NIFTY ──────────────────────────────────────────
+    for symbol in ['NIFTY', 'BANKNIFTY']:
+        ws = wb.active if symbol == 'NIFTY' else wb.create_sheet()
+        ws.title = f'IV History {symbol}'
+
+        headers = ['Time', 'Spot Price', 'CE IV %', 'PE IV %', 'Avg IV %', 'Spread (CE-PE)', 'VIX', 'CE/VIX', 'PE/VIX', 'CE LTP', 'PE LTP']
+        fills   = [hdr_fill_nt]*2 + [hdr_fill_ce]*2 + [hdr_fill_nt] + [hdr_fill_nt] + [hdr_fill_vx]*3 + [hdr_fill_ce, hdr_fill_pe]
+        write_sheet_header(ws, f'IV History — {symbol} — {today}', headers, fills)
+
+        iv_hist = get_iv_history(symbol)
+        for row in iv_hist:
+            spread = round(row.get('ce_iv', 0) - row.get('pe_iv', 0), 2) if row.get('ce_iv') and row.get('pe_iv') else ''
+            vix    = row.get('vix', '')
+            ce_vix = round(row.get('ce_iv', 0) / vix, 3) if vix and row.get('ce_iv') else ''
+            pe_vix = round(row.get('pe_iv', 0) / vix, 3) if vix and row.get('pe_iv') else ''
+            ws.append([
+                row.get('time', ''),
+                row.get('spot', ''),
+                row.get('ce_iv', ''),
+                row.get('pe_iv', ''),
+                row.get('avg_iv', ''),
+                spread,
+                vix if vix else '',
+                ce_vix,
+                pe_vix,
+                row.get('ce_ltp', ''),
+                row.get('pe_ltp', ''),
+            ])
+
+        for r in ws.iter_rows(min_row=4, max_row=ws.max_row):
+            for c in r:
+                style_data(c)
+
+        col_widths = [8, 12, 8, 8, 8, 12, 8, 8, 8, 8, 8]
+        for i, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── Sheet 2: PCR Intraday — NIFTY + BANKNIFTY ────────────────────────────
+    for symbol in ['NIFTY', 'BANKNIFTY']:
+        ws = wb.create_sheet(f'PCR Intraday {symbol}')
+        headers = ['Time', 'PCR (OI)', 'CE COI', 'PE COI', 'COI Diff (PE-CE)', 'Signal']
+        fills   = [hdr_fill_nt, hdr_fill_nt, hdr_fill_ce, hdr_fill_pe, hdr_fill_nt, hdr_fill_nt]
+        write_sheet_header(ws, f'PCR Intraday — {symbol} — {today}', headers, fills)
+
+        pcr_snaps = get_pcr_intraday(symbol, interval_mins=3)
+        for row in reversed(pcr_snaps):  # oldest first
+            ws.append([
+                row.get('time', ''),
+                row.get('pcr', ''),
+                row.get('ce_coi', ''),
+                row.get('pe_coi', ''),
+                row.get('diff', ''),
+                row.get('signal', ''),
+            ])
+
+        for r in ws.iter_rows(min_row=4, max_row=ws.max_row):
+            for c in r:
+                style_data(c)
+
+        col_widths = [8, 10, 12, 12, 14, 10]
+        for i, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── Sheet 3: Strike PCR History — NIFTY + BANKNIFTY ──────────────────────
+    for symbol in ['NIFTY', 'BANKNIFTY']:
+        ws = wb.create_sheet(f'Strike History {symbol}')
+
+        # Get all strikes from first snapshot
+        snaps = get_strike_pcr_history(symbol)
+        if snaps:
+            all_strikes = sorted(snaps[0].get('strikes', {}).keys(), key=lambda x: int(x), reverse=True)
+        else:
+            all_strikes = []
+
+        # Headers: Time | Strike1 PCR | Strike1 VolDiff | Strike2 PCR ...
+        base_headers = ['Time']
+        base_fills   = [hdr_fill_nt]
+        for strike in all_strikes:
+            base_headers += [f'{strike} PCR', f'{strike} CE COI', f'{strike} PE COI', f'{strike} VolDiff']
+            base_fills   += [hdr_fill_nt, hdr_fill_ce, hdr_fill_pe, hdr_fill_nt]
+
+        write_sheet_header(ws, f'Strike PCR History — {symbol} — {today}', base_headers, base_fills)
+
+        for snap in snaps:
+            row_data = [snap.get('time', '')]
+            for strike in all_strikes:
+                entry = snap.get('strikes', {}).get(strike, {})
+                if isinstance(entry, dict):
+                    row_data += [
+                        entry.get('pcr_coi', ''),
+                        entry.get('ce_coi', ''),
+                        entry.get('pe_coi', ''),
+                        entry.get('vol_diff', ''),
+                    ]
+                else:
+                    row_data += ['', '', '', '']
+            ws.append(row_data)
+
+        for r in ws.iter_rows(min_row=4, max_row=ws.max_row):
+            for c in r:
+                style_data(c)
+
+        for i in range(1, len(base_headers) + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 10
+
+    # ── Sheet 4: VIX History ──────────────────────────────────────────────────
+    ws_vix = wb.create_sheet('VIX History')
+    headers = ['Time', 'VIX Value']
+    fills   = [hdr_fill_nt, hdr_fill_vx]
+    write_sheet_header(ws_vix, f'India VIX Intraday — {today}', headers, fills)
+
+    for row in get_vix_history():
+        ws_vix.append([row.get('time', ''), row.get('value', '')])
+
+    for r in ws_vix.iter_rows(min_row=4, max_row=ws_vix.max_row):
+        for c in r:
+            style_data(c)
+    ws_vix.column_dimensions['A'].width = 10
+    ws_vix.column_dimensions['B'].width = 12
+
+    # ── Save ──────────────────────────────────────────────────────────────────
+    wb.save(filepath)
+    print(f"  [eod] Saved: {filepath}")
+    return filepath
+
+
+def eod_scheduler():
+    """Runs in background — triggers export at 3:30 PM IST every trading day."""
+    ist = timezone(timedelta(hours=5, minutes=30))
+    while True:
+        now = datetime.now(ist)
+        today_str = now.strftime('%Y-%m-%d')
+        # Trigger at 15:30 IST
+        if now.hour == 15 and now.minute >= 30 and _eod_exported_today['date'] != today_str:
+            # Only on weekdays (Mon-Fri)
+            if now.weekday() < 5:
+                _eod_exported_today['date'] = today_str
+                try:
+                    export_eod_spreadsheet()
+                except Exception as e:
+                    print(f"  [eod] export failed: {e}")
+        time.sleep(60)  # check every minute
 
 _news_items_cache = {'data': [], 'ts': 0}
 NEWS_CACHE_TTL    = 300  # 5 minutes
@@ -323,6 +526,14 @@ def get_futures_dashboard():
     result = fetch_futures_dashboard(symbol, options_data)
     return jsonify(sanitize(result or {}))
 
+@app.route('/api/export-eod')
+def trigger_eod_export():
+    try:
+        path = export_eod_spreadsheet()
+        return jsonify({'status': 'ok', 'file': os.path.basename(path)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/countries')
 def get_countries():
     return jsonify([
@@ -373,4 +584,6 @@ if __name__ == '__main__':
     t_news.start()
     t_fd = threading.Thread(target=refresh_futures_dashboard, daemon=True)
     t_fd.start()
+    t_eod = threading.Thread(target=eod_scheduler, daemon=True)
+    t_eod.start()
     app.run(port=3001, debug=False)

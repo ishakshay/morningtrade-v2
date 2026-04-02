@@ -42,18 +42,18 @@ def update_vwap(symbol, price, total_vol_today):
         return round(state['cum_pv'] / state['cum_vol'], 2)
     return round(price, 2)
 
-def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap, pcr_coi=0):
+def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap):
     global _intraday_history
     today   = date.today().isoformat()
-    now_hm = datetime.now(); now_str = now_hm.strftime('%H') + str((now_hm.minute // 3) * 3).zfill(2)
+    now_str = datetime.now().strftime('%H%M')
     if symbol not in _intraday_history:
         _intraday_history[symbol] = {'date': today, 'snapshots': []}
     if _intraday_history[symbol]['date'] != today:
         _intraday_history[symbol] = {'date': today, 'snapshots': []}
     diff = put_vol - call_vol
-    if diff > 0 and pcr > 1.2:
+    if pcr > 1.2:
         opt_signal = 'BUY'
-    elif diff < 0 and pcr < 0.8:
+    elif pcr < 0.8:
         opt_signal = 'SELL'
     else:
         opt_signal = 'NEUTRAL'
@@ -72,7 +72,6 @@ def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap, pc
         'put_vol':     put_vol,
         'diff':        diff,
         'pcr':         round(pcr, 2),
-        'pcr_coi':     round(pcr_coi, 2) if pcr_coi else 0,
         'opt_signal':  opt_signal,
         'vwap':        fut_vwap,
         'price':       fut_ltp,
@@ -257,9 +256,6 @@ def fetch_dashboard(symbol, options_data):
     futures_info = fetch_futures_data(symbol)
     strike_rows  = build_strike_rows(options_data, futures_info)
     if options_data and futures_info:
-        total_ce_coi = options_data.get('total_ce_coi', 0)
-        total_pe_coi = options_data.get('total_pe_coi', 0)
-        pcr_coi      = round(total_pe_coi / total_ce_coi, 2) if total_ce_coi > 0 else 0
         save_intraday_snapshot(
             symbol,
             options_data.get('total_ce_vol', 0),
@@ -267,7 +263,6 @@ def fetch_dashboard(symbol, options_data):
             options_data.get('pcr_total', 0),
             futures_info.get('fut_ltp', 0),
             futures_info.get('fut_vwap', 0),
-            pcr_coi,
         )
     return {
         'symbol':           symbol,

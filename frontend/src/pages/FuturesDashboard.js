@@ -253,7 +253,7 @@ function IntradayTable(props) {
       </div>
 
       <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
-        Option Signal: BUY if Put vol &gt; Call vol + PCR &gt;1.2 · SELL if Call vol &gt; Put vol + PCR &lt;0.8 ·
+        Option Signal: BUY if PCR (COI) &gt;1.2 · SELL if PCR (COI) &lt;0.8 · NEUTRAL otherwise ·
         VWAP Signal: BUY if Futures LTP &gt; VWAP · SELL if below · VWAP = (H+L+C)/3
       </div>
     </div>
