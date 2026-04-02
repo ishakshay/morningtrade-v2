@@ -83,7 +83,7 @@ def get_vix_history():
     today = date.today().isoformat()
     return [h for h in _vix_history if h.get('date') == today]
 
-def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, spot_price=0):
+def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, spot_price=0, vix=0):
     today = date.today().isoformat()
     if symbol not in _iv_history:
         _iv_history[symbol] = []
@@ -91,15 +91,22 @@ def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, s
     if hist and hist[0].get('date') != today:
         _iv_history[symbol] = []
         hist = _iv_history[symbol]
+    spread      = round(atm_ce_iv - atm_pe_iv, 2) if atm_ce_iv > 0 and atm_pe_iv > 0 else None
+    ce_vix_ratio = round(atm_ce_iv / vix, 3) if vix > 0 and atm_ce_iv > 0 else None
+    pe_vix_ratio = round(atm_pe_iv / vix, 3) if vix > 0 and atm_pe_iv > 0 else None
     hist.append({
-        'date':      today,
-        'time':      datetime.now().strftime('%H:%M'),
-        'ce_iv':     atm_ce_iv,
-        'pe_iv':     atm_pe_iv,
-        'avg_iv':    round((atm_ce_iv + atm_pe_iv) / 2, 2),
-        'ce_ltp':    atm_ce_ltp,
-        'pe_ltp':    atm_pe_ltp,
-        'spot':      spot_price,
+        'date':         today,
+        'time':         datetime.now().strftime('%H:%M'),
+        'ce_iv':        atm_ce_iv,
+        'pe_iv':        atm_pe_iv,
+        'avg_iv':       round((atm_ce_iv + atm_pe_iv) / 2, 2),
+        'ce_ltp':       atm_ce_ltp,
+        'pe_ltp':       atm_pe_ltp,
+        'spot':         spot_price,
+        'vix':          round(vix, 2) if vix > 0 else None,
+        'spread':       spread,
+        'ce_vix_ratio': ce_vix_ratio,
+        'pe_vix_ratio': pe_vix_ratio,
     })
     if len(hist) > 120:
         _iv_history[symbol] = hist[-120:]

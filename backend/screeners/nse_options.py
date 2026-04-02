@@ -57,6 +57,8 @@ def save_strike_pcr_snapshot(symbol, five_strike_rows):
             snapshot['strikes'][str(strike)] = {
                 'pcr_coi':  round(row.get('pcr_coi') or 0, 2),
                 'vol_diff': vol_diff,
+                'ce_coi':   row.get('ce_chg_oi') or 0,
+                'pe_coi':   row.get('pe_chg_oi') or 0,
             }
     _strike_pcr_hist[symbol]['snapshots'].append(snapshot)
     if len(_strike_pcr_hist[symbol]['snapshots']) > 12:
@@ -372,12 +374,10 @@ def parse_option_chain(data, symbol):
         if strike in five_strikes:
             five_ce_coi += ce_chg_oi
             five_pe_coi += pe_chg_oi
-            pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi != 0 else (None if pe_chg_oi == 0 else None)
+            pcr_coi_strike = round(pe_chg_oi / ce_chg_oi, 2) if ce_chg_oi > 0 else 0
             five_strike_rows.append({
                 'strike':    strike,
                 'is_atm':   strike == atm_strike,
-                'ce_oi':     ce_oi,
-                'pe_oi':     pe_oi,
                 'ce_chg_oi': ce_chg_oi,
                 'pe_chg_oi': pe_chg_oi,
                 'ce_vol':    ce_vol,
