@@ -1198,7 +1198,7 @@ function FiveStrikeTable(props) {
 
       </div>
 
-      {/* Strike table — Strike | Vol Bias (now) | COI PCR (now) | 12 historical snapshots each showing PCR + vol diff */}
+      {/* Strike table — CE OI | CE COI | CE Trend | Strike | PE Trend | PE OI | PE COI | Vol Bias | Historical OI PCR + vol diff */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
@@ -1323,7 +1323,7 @@ function FiveStrikeTable(props) {
                   {/* Historical snapshots — each shows COI PCR + vol diff */}
                   {reversedHistory.map(function(snap, i) {
                     var entry   = snap.strikes ? snap.strikes[String(row.strike)] : null;
-                    var pcr_h   = entry && typeof entry === 'object' ? entry.pcr_coi  : (typeof entry === 'number' ? entry : null);
+                    var pcr_h   = entry && typeof entry === 'object' ? entry.pcr_oi   : (typeof entry === 'number' ? entry : null);
                     var vdiff_h = entry && typeof entry === 'object' ? entry.vol_diff : null;
                     var col     = pcr_h != null ? pcrColor(pcr_h) : '#334155';
 
@@ -1406,7 +1406,7 @@ function FiveStrikeTable(props) {
       })()}
 
       <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
-        Vol Bias: PE Dom = put side more active · CE Dom = call side more active · Each historical column shows COI PCR (top) + Vol Diff PE−CE (bottom)
+        Vol Bias: PE Dom = put side more active · CE Dom = call side more active · Each historical column shows OI PCR = PE OI/CE OI (top) + Vol Diff PE−CE (bottom)
       </div>
     </div>
   );

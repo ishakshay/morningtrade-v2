@@ -45,7 +45,9 @@ def update_vwap(symbol, price, total_vol_today):
 def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap):
     global _intraday_history
     today   = date.today().isoformat()
-    now_str = datetime.now().strftime('%H%M')
+    _now    = datetime.now()
+    bucketed_min = (_now.minute // 3) * 3
+    now_str = _now.strftime('%H') + str(bucketed_min).zfill(2)
     if symbol not in _intraday_history:
         _intraday_history[symbol] = {'date': today, 'snapshots': []}
     if _intraday_history[symbol]['date'] != today:
@@ -82,8 +84,8 @@ def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap):
         snaps[-1] = snap
     else:
         snaps.append(snap)
-    if len(snaps) > 100:
-        _intraday_history[symbol]['snapshots'] = snaps[-100:]
+    if len(snaps) > 130:
+        _intraday_history[symbol]['snapshots'] = snaps[-130:]
 
 def get_intraday_history(symbol):
     today = date.today().isoformat()
