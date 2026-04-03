@@ -2534,190 +2534,647 @@ function ZoneSplit(props) {
 
 // ── Alert System ─────────────────────────────────────────────────────────────
 function AlertSystem(props) {
-  var chain       = props.chain       || [];
-  var chainBN     = props.chainBN     || [];
-  var atmNifty    = props.atmNifty    || 0;
-  var atmBN       = props.atmBN       || 0;
-  var prevChain   = props.prevChain   || [];
-  var prevChainBN = props.prevChainBN || [];
-  var alerts      = props.alerts      || [];
-  var onAlerts    = props.onAlerts;
-  var onClear     = props.onClear;
-  var [open, setOpen]   = React.useState(false);
-  var [toast, setToast] = React.useState(null);
+  var chain     = props.chain     || [];
+  var chainBN   = props.chainBN   || [];
+  var atmNifty  = props.atmNifty  || 0;
+  var atmBN     = props.atmBN     || 0;
+  var spotNifty = props.spotNifty || atmNifty;
+  var spotBN    = props.spotBN    || atmBN;
+  var alerts    = props.alerts    || [];
+  var onAlerts  = props.onAlerts;
+  var onClear   = props.onClear;
 
-  function zoneCOI(ch, atm, stp, minD, maxD, dir, side) {
-    return ch.filter(function(r) {
-      var d = Math.abs(r.strike - atm) / stp;
-      return d >= minD && d <= maxD &&
-        (dir === 0 || (dir > 0 && r.strike > atm) || (dir < 0 && r.strike < atm));
-    }).reduce(function(s, r) {
-      return s + (side === 'ce' ? (r.ce_chg_oi||0) : (r.pe_chg_oi||0));
-    }, 0);
+  var [open, setOpen]     = React.useState(false);
+  var [tab, setTab]       = React.useState('feed');   // 'feed' | 'strikes'
+  var [toast, setToast]   = React.useState(null);
+  var [symFilter, setSymFilter] = React.useState('ALL'); // 'ALL'|'NIFTY'|'BANKNIFTY'
+
+  // ── Rolling chain history (42 snaps = 2hr at 3-min) ──────────────────────
+  var chainHistRef   = React.useRef([]);
+  var chainHistBNRef = React.useRef([]);
+
+  // ── Delta distributions per channel ──────────────────────────────────────
+  var distRef = React.useRef({});
+
+  // ── Cooldown tracker: key → last fired ts ────────────────────────────────
+  var cooldownRef = React.useRef({});
+
+  // ── Strike color map for visual continuity in feed ───────────────────────
+  var strikeColors = ['#60a5fa','#f59e0b','#a78bfa','#f87171','#4ade80','#fb923c','#38bdf8','#e879f9'];
+  var strikeColorMap = React.useRef({});
+  function strikeColor(key) {
+    if (!strikeColorMap.current[key]) {
+      var idx = Object.keys(strikeColorMap.current).length % strikeColors.length;
+      strikeColorMap.current[key] = strikeColors[idx];
+    }
+    return strikeColorMap.current[key];
   }
 
-  function runAlerts(ch, prev, atm, stp, sym) {
-    if (!ch.length || !prev.length || !atm) return [];
-    var now     = new Date();
-    var timeStr = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
-    var th      = stp === 100 ? 600000 : 300000;
-    var fired   = [];
+  // ── Timeframes ────────────────────────────────────────────────────────────
+  var TFS = [
+    { snaps: 3,  label: '9min',  cooldownMs: 9*60*1000  },
+    { snaps: 5,  label: '15min', cooldownMs: 15*60*1000 },
+    { snaps: 10, label: '30min', cooldownMs: 30*60*1000 },
+    { snaps: 20, label: '1hr',   cooldownMs: 60*60*1000 },
+    { snaps: 40, label: '2hr',   cooldownMs: 120*60*1000},
+  ];
 
-    var checks = [
-      { minD:6, maxD:7, dir: 1, side:'ce', name:'Deep OTM CE' },
-      { minD:3, maxD:5, dir: 1, side:'ce', name:'OTM CE'      },
-      { minD:3, maxD:5, dir:-1, side:'pe', name:'OTM PE'      },
-      { minD:6, maxD:7, dir:-1, side:'pe', name:'Deep OTM PE' },
+  var MIN_OI      = 50000;
+  var MIN_SAMPLES = 5;
+  var ALERT_PCT   = 80;
+  var HIGH_PCT    = 92;
+  var MED_PCT     = 82;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function pctRank(dist, val) {
+    if (!dist || !dist.length) return 0;
+    var abs   = Math.abs(val);
+    var below = dist.filter(function(v) { return v < abs; }).length;
+    return Math.round((below / dist.length) * 100);
+  }
+
+  function addDist(key, val) {
+    if (!distRef.current[key]) distRef.current[key] = [];
+    distRef.current[key].push(Math.abs(val));
+    if (distRef.current[key].length > 80) distRef.current[key].shift();
+  }
+
+  function fmt(n) {
+    var a = Math.abs(n);
+    return (n > 0 ? '+' : '-') + (a >= 100000 ? (a/100000).toFixed(1)+'L' : a >= 1000 ? (a/1000).toFixed(0)+'K' : a);
+  }
+
+  function nowStr() {
+    var d = new Date();
+    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+  }
+
+  // ── Conviction score ──────────────────────────────────────────────────────
+  function conviction(pct, oiRank, tfSnaps, tfCount, isUnwind) {
+    var p = pct >= HIGH_PCT ? 3 : pct >= MED_PCT ? 2 : 1;
+    var o = oiRank === 1 ? 3 : oiRank === 2 ? 2 : oiRank === 3 ? 1.5 : 1;
+    var t = tfSnaps >= 20 ? 2 : tfSnaps >= 10 ? 1 : 0;
+    var c = tfCount >= 3 ? 1 : 0;
+    var u = isUnwind ? 1 : 0;
+    return Math.min(10, Math.round(p + o + t + c + u));
+  }
+
+  function convBar(score) {
+    var filled = Math.round(score);
+    var col    = score >= 8 ? '#4ade80' : score >= 6 ? '#60a5fa' : score >= 4 ? '#f59e0b' : '#64748b';
+    var bars   = '';
+    for (var i = 0; i < 10; i++) bars += i < filled ? '█' : '░';
+    return { bars: bars, col: col };
+  }
+
+  // ── Get OI rank for a strike ──────────────────────────────────────────────
+  function getOIRank(ch, strike, side) {
+    var sorted = ch
+      .filter(function(r) { return (side==='ce'?(r.ce_oi||0):(r.pe_oi||0)) > MIN_OI; })
+      .sort(function(a,b) { return (side==='ce'?b.ce_oi-a.ce_oi:b.pe_oi-a.pe_oi); });
+    for (var i = 0; i < sorted.length; i++) {
+      if (sorted[i].strike === strike) return i + 1;
+    }
+    return 99;
+  }
+
+  // ── Check cooldown ────────────────────────────────────────────────────────
+  function canFire(key, cooldownMs, pct, prevPct) {
+    var last = cooldownRef.current[key] || 0;
+    var now  = Date.now();
+    if (now - last < cooldownMs) {
+      // Allow re-fire if percentile jumped significantly (escalation)
+      if (prevPct && pct >= prevPct + 8) return true;
+      return false;
+    }
+    return true;
+  }
+
+  // ── Count how many timeframes already fired for this key today ────────────
+  function tfCount(sym, strike, side, direction) {
+    var base = sym + '|' + strike + '|' + side + '|' + direction + '|';
+    return alerts.filter(function(a) { return a.cdKey && a.cdKey.indexOf(base) === 0; }).length;
+  }
+
+  // ── Zone COI ─────────────────────────────────────────────────────────────
+  function zoneCOI(ch, atm, spot, minPct, maxPct, dir, side) {
+    var base = spot || atm;
+    return ch.filter(function(r) {
+      var dist = Math.abs(r.strike - atm);
+      return dist >= minPct*base && dist < maxPct*base &&
+             ((r.ce_oi||0)>MIN_OI||(r.pe_oi||0)>MIN_OI) &&
+             (dir===0||(dir>0&&r.strike>atm)||(dir<0&&r.strike<atm));
+    }).reduce(function(s,r){return s+(side==='ce'?(r.ce_chg_oi||0):(r.pe_chg_oi||0));},0);
+  }
+
+  // ── Main alert computation ────────────────────────────────────────────────
+  function computeAlerts(histArr, atm, spot, sym, fired) {
+    if (histArr.length < 2) return;
+    var latest = histArr[histArr.length-1].chain;
+
+    // ── STRIKE-LEVEL ──────────────────────────────────────────────────────
+    // Watch: top 5 CE OI + top 5 PE OI + ATM ±2
+    var topCE = latest
+      .filter(function(r){return (r.ce_oi||0)>MIN_OI;})
+      .sort(function(a,b){return b.ce_oi-a.ce_oi;})
+      .slice(0,5)
+      .map(function(r){return r.strike;});
+
+    var topPE = latest
+      .filter(function(r){return (r.pe_oi||0)>MIN_OI;})
+      .sort(function(a,b){return b.pe_oi-a.pe_oi;})
+      .slice(0,5)
+      .map(function(r){return r.strike;});
+
+    var atmSteps  = latest.filter(function(r){return Math.abs(r.strike-atm)<=(atm*0.005);}).map(function(r){return r.strike;});
+    var watchSet  = {};
+    topCE.forEach(function(s){watchSet[s]='ce';});
+    topPE.forEach(function(s){watchSet[s]=watchSet[s]?'both':'pe';});
+    atmSteps.forEach(function(s){watchSet[s]=watchSet[s]||'both';});
+
+    TFS.forEach(function(tf) {
+      if (histArr.length < tf.snaps+1) return;
+      var past    = histArr[histArr.length-1-tf.snaps].chain;
+      var pastMap = {};
+      past.forEach(function(r){pastMap[r.strike]=r;});
+      var openSnap = histArr[0].chain;
+      var openMap  = {};
+      openSnap.forEach(function(r){openMap[r.strike]=r;});
+
+      Object.keys(watchSet).forEach(function(strikeStr) {
+        var strike = parseInt(strikeStr);
+        var now    = latest.find(function(r){return r.strike===strike;});
+        var prev   = pastMap[strike];
+        var open   = openMap[strike];
+        if (!now || !prev) return;
+
+        ['ce','pe'].forEach(function(side) {
+          if (watchSet[strikeStr] !== side && watchSet[strikeStr] !== 'both') return;
+          var nowOI  = side==='ce'?(now.ce_oi||0):(now.pe_oi||0);
+          if (nowOI < MIN_OI) return;
+
+          var nowCOI  = side==='ce'?(now.ce_chg_oi||0):(now.pe_chg_oi||0);
+          var prevCOI = side==='ce'?(prev.ce_chg_oi||0):(prev.pe_chg_oi||0);
+          var openCOI = open ? (side==='ce'?(open.ce_chg_oi||0):(open.pe_chg_oi||0)) : 0;
+          var delta   = nowCOI - prevCOI;
+          var fromOpen = nowCOI - openCOI;
+
+          var distKey = sym+'|strike|'+strike+'|'+side+'|'+tf.snaps;
+          addDist(distKey, delta);
+          var dist = distRef.current[distKey];
+          if (!dist || dist.length < MIN_SAMPLES) return;
+
+          var pct = pctRank(dist, delta);
+          if (pct < ALERT_PCT) return;
+
+          var isUnwind = delta < 0;
+          var dir      = isUnwind ? 'unwind' : 'build';
+          var oiRank   = getOIRank(latest, strike, side);
+          var tfc      = tfCount(sym, strike, side, dir);
+          var score    = conviction(pct, oiRank, tf.snaps, tfc, isUnwind);
+
+          var cdKey = sym+'|'+strike+'|'+side+'|'+dir+'|'+tf.label;
+          var prevPct = (cooldownRef.current[cdKey+'_pct'] || 0);
+          if (!canFire(cdKey, tf.cooldownMs, pct, prevPct)) return;
+
+          cooldownRef.current[cdKey]        = Date.now();
+          cooldownRef.current[cdKey+'_pct'] = pct;
+
+          var isCE     = side==='ce';
+          var distAbs  = Math.abs(strike - atm);
+          var tag      = strike===atm?'ATM':strike>atm?'#'+getOIRank(latest,strike,'ce')+' Resistance':'#'+getOIRank(latest,strike,'pe')+' Support';
+          var emoji    = isUnwind ? (isCE?'🟢':'🔴') : (isCE?'🔴':'🟢');
+          var typeLbl  = (isUnwind ? (isCE?'CE UNWIND':'PE UNWIND') : (isCE?'CE BUILDUP':'PE BUILDUP')) + ' — ' + strike;
+
+          var whatDesc = isUnwind
+            ? (isCE
+              ? 'Call writers covering at '+strike+' ('+tag+'). Resistance crumbling. Watch for price to break above.'
+              : 'Put writers covering at '+strike+' ('+tag+'). Support crumbling. Watch for price to break below.')
+            : (isCE
+              ? 'Fresh call writing at '+strike+' ('+tag+'). Resistance strengthening. Upside capped here.'
+              : 'Fresh put writing at '+strike+' ('+tag+'). Support strengthening. Dips to this level are defended.');
+
+          var escNote = tfc >= 2 ? ' | '+tfc+' timeframes confirmed' : '';
+
+          fired.push({
+            id:       Date.now()+Math.random(),
+            ts:       Date.now(),
+            time:     nowStr(),
+            symbol:   sym,
+            strike:   strike,
+            side:     side,
+            dir:      dir,
+            type:     typeLbl,
+            emoji:    emoji,
+            desc:     whatDesc,
+            oi:       fmt(nowOI),
+            delta:    fmt(delta),
+            fromOpen: fmt(fromOpen),
+            pct:      pct,
+            tf:       tf.label,
+            tfSnaps:  tf.snaps,
+            tfCount:  tfc,
+            score:    score,
+            oiRank:   oiRank,
+            tag:      tag,
+            level:    'STRIKE',
+            cdKey:    cdKey,
+            escNote:  escNote,
+            samples:  dist.length,
+          });
+        });
+      });
+    });
+
+    // ── ZONE-LEVEL ────────────────────────────────────────────────────────
+    var zones = [
+      { key:'deep_ce', name:'Deep OTM CE', minP:0.02, maxP:0.06, dir: 1, side:'ce' },
+      { key:'otm_ce',  name:'OTM CE',      minP:0.005,maxP:0.02, dir: 1, side:'ce' },
+      { key:'otm_pe',  name:'OTM PE',      minP:0.005,maxP:0.02, dir:-1, side:'pe' },
+      { key:'deep_pe', name:'Deep OTM PE', minP:0.02, maxP:0.06, dir:-1, side:'pe' },
     ];
 
-    checks.forEach(function(c) {
-      var nowV  = zoneCOI(ch,   atm, stp, c.minD, c.maxD, c.dir, c.side);
-      var prevV = zoneCOI(prev, atm, stp, c.minD, c.maxD, c.dir, c.side);
-      var delta = nowV - prevV;
-      if (Math.abs(delta) < th) return;
+    TFS.forEach(function(tf) {
+      if (histArr.length < tf.snaps+1) return;
+      var past    = histArr[histArr.length-1-tf.snaps].chain;
 
-      var isCE = c.side === 'ce', isDeep = c.minD === 6, isUp = delta > 0;
-      var conf  = Math.abs(delta) > th*3 ? 'HIGH' : Math.abs(delta) > th*1.5 ? 'MEDIUM' : 'LOW';
-      var confCol = conf==='HIGH' ? '#4ade80' : conf==='MEDIUM' ? '#f59e0b' : '#64748b';
+      zones.forEach(function(z) {
+        var nowV  = zoneCOI(latest, atm, spot, z.minP, z.maxP, z.dir, z.side);
+        var pastV = zoneCOI(past,   atm, spot, z.minP, z.maxP, z.dir, z.side);
+        var delta = nowV - pastV;
 
-      var type, emoji, desc;
-      if (isCE && isUp && isDeep)  { type='DEEP OTM SPEC CALLS';  emoji='🟣'; desc='Deep OTM call buying surge — speculative bullish bet, big move possible'; }
-      else if (isCE && isUp)       { type='RESISTANCE BUILDING';   emoji='🔴'; desc='OTM call writing surge — institutions capping upside at ' + sym; }
-      else if (isCE)               { type='RESISTANCE CRUMBLING';  emoji='🟢'; desc='Call writers exiting — ceiling breaking, possible breakout signal'; }
-      else if (!isCE && isUp && isDeep) { type='DEEP OTM SPEC PUTS'; emoji='🟣'; desc='Deep OTM put buying surge — speculative bearish bet, big move possible'; }
-      else if (!isCE && isUp)      { type='SUPPORT BUILDING';      emoji='🟢'; desc='OTM put writing surge — institutions building floor at ' + sym; }
-      else                         { type='SUPPORT CRUMBLING';     emoji='🔴'; desc='Put writers exiting — floor breaking, possible breakdown signal'; }
+        var distKey = sym+'|zone|'+z.key+'|'+tf.snaps;
+        addDist(distKey, delta);
+        var dist = distRef.current[distKey];
+        if (!dist || dist.length < MIN_SAMPLES) return;
 
-      var f = function(n) { var a=Math.abs(n); return (n>0?'+':'')+(a>=100000?(a/100000).toFixed(1)+'L':a>=1000?(a/1000).toFixed(0)+'K':a); };
-      fired.push({ id: Date.now()+Math.random(), time: timeStr, symbol: sym, type: type, emoji: emoji,
-                   desc: desc, zone: c.name, delta: f(delta), conf: conf, confCol: confCol });
+        var pct = pctRank(dist, delta);
+        if (pct < ALERT_PCT) return;
+
+        var isUnwind = delta < 0;
+        var dir      = isUnwind ? 'unwind' : 'build';
+        var isCE     = z.side==='ce';
+        var isDeep   = z.key.indexOf('deep')===0;
+        var score    = conviction(pct, 4, tf.snaps, 0, isUnwind);
+
+        var cdKey = sym+'|zone|'+z.key+'|'+dir+'|'+tf.label;
+        var prevPct = (cooldownRef.current[cdKey+'_pct'] || 0);
+        if (!canFire(cdKey, tf.cooldownMs, pct, prevPct)) return;
+
+        cooldownRef.current[cdKey]        = Date.now();
+        cooldownRef.current[cdKey+'_pct'] = pct;
+
+        var emoji, typeLbl, desc;
+        if (isCE && !isUnwind && isDeep) { emoji='🟣'; typeLbl='DEEP OTM SPEC CALLS';  desc='Speculative call buying surge >2% above ATM — big move bet. Watch for 30min confirmation.'; }
+        else if (isCE && !isUnwind)      { emoji='🔴'; typeLbl='RESISTANCE BUILDING';   desc='OTM call writing surge — institutions constructing ceiling across multiple strikes.'; }
+        else if (isCE && isUnwind)       { emoji='🟢'; typeLbl='RESISTANCE CRUMBLING';  desc='OTM call writers covering en masse — ceiling collapsing, breakout signal.'; }
+        else if (!isCE && isUnwind && isDeep) { emoji='🟣'; typeLbl='DEEP OTM SPEC PUTS'; desc='Speculative put buying surge >2% below ATM — big move bet. Watch for 30min confirmation.'; }
+        else if (!isCE && !isUnwind)     { emoji='🟢'; typeLbl='SUPPORT BUILDING';      desc='OTM put writing surge — institutions constructing floor across multiple strikes.'; }
+        else                             { emoji='🔴'; typeLbl='SUPPORT CRUMBLING';     desc='OTM put writers covering en masse — floor collapsing, breakdown signal.'; }
+
+        fired.push({
+          id:      Date.now()+Math.random(),
+          ts:      Date.now(),
+          time:    nowStr(),
+          symbol:  sym,
+          strike:  null,
+          side:    z.side,
+          dir:     dir,
+          type:    typeLbl,
+          emoji:   emoji,
+          desc:    desc,
+          delta:   fmt(delta),
+          pct:     pct,
+          tf:      tf.label,
+          tfSnaps: tf.snaps,
+          tfCount: 0,
+          score:   score,
+          oiRank:  99,
+          tag:     z.name,
+          level:   'ZONE',
+          cdKey:   cdKey,
+          samples: dist.length,
+        });
+      });
     });
-    return fired;
   }
 
+  // ── Multi-timeframe mega alert ────────────────────────────────────────────
+  function checkMegaAlerts(newFired, existingAlerts, fired) {
+    // Group by sym|strike|side|dir — if 3+ timeframes in last 2hr → mega alert
+    var groups = {};
+    var allAlerts = existingAlerts.concat(newFired);
+    var cutoff = Date.now() - 2*60*60*1000;
+    allAlerts.filter(function(a){return a.ts>cutoff&&a.strike;}).forEach(function(a){
+      var k = a.symbol+'|'+a.strike+'|'+a.side+'|'+a.dir;
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(a);
+    });
+    Object.keys(groups).forEach(function(k) {
+      var g = groups[k];
+      var tfs = {};
+      g.forEach(function(a){tfs[a.tf]=true;});
+      var count = Object.keys(tfs).length;
+      if (count < 3) return;
+      // Check not already fired mega for this group recently
+      var megaKey = 'MEGA|'+k;
+      if (cooldownRef.current[megaKey] && Date.now()-cooldownRef.current[megaKey] < 30*60*1000) return;
+      cooldownRef.current[megaKey] = Date.now();
+      var rep = g[0];
+      fired.push({
+        id: Date.now()+Math.random(), ts: Date.now(), time: nowStr(),
+        symbol: rep.symbol, strike: rep.strike, side: rep.side, dir: rep.dir,
+        type: '⚡ ALL TF ALIGNED — '+rep.type,
+        emoji: '⚡', desc: count+' timeframes confirming '+rep.type+'. Highest conviction signal. '+rep.desc,
+        delta: rep.delta, pct: 99, tf: count+'× TF', tfSnaps: 40, tfCount: count,
+        score: 10, oiRank: rep.oiRank, tag: rep.tag, level: 'MEGA', cdKey: megaKey,
+        samples: rep.samples||0,
+      });
+    });
+  }
+
+  // ── Effect: update history + run alerts ───────────────────────────────────
   React.useEffect(function() {
+    if (chain.length)   { chainHistRef.current.push({chain:chain,ts:Date.now()});   if(chainHistRef.current.length>42)   chainHistRef.current.shift(); }
+    if (chainBN.length) { chainHistBNRef.current.push({chain:chainBN,ts:Date.now()});if(chainHistBNRef.current.length>42) chainHistBNRef.current.shift(); }
+
     var fired = [];
-    fired = fired.concat(runAlerts(chain,   prevChain,   atmNifty, 50,  'NIFTY'));
-    fired = fired.concat(runAlerts(chainBN, prevChainBN, atmBN,    100, 'BANKNIFTY'));
+    computeAlerts(chainHistRef.current,   atmNifty, spotNifty, 'NIFTY',     fired);
+    computeAlerts(chainHistBNRef.current, atmBN,    spotBN,    'BANKNIFTY', fired);
+    checkMegaAlerts(fired, alerts, fired);
+
     if (fired.length) {
       onAlerts && onAlerts(fired);
-      setToast(fired[0]);
-      var t = setTimeout(function() { setToast(null); }, 8000);
-      return function() { clearTimeout(t); };
+      // Show highest score as toast
+      var best = fired.reduce(function(a,b){return b.score>a.score?b:a;}, fired[0]);
+      setToast(best);
+      var t = setTimeout(function(){setToast(null);}, 10000);
+      return function(){clearTimeout(t);};
     }
   }, [chain, chainBN]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  var alertBtn = (
-    <button onClick={function() { setOpen(true); }}
-      style={{ background: '#1e293b', border: '1px solid ' + (alerts.length ? '#f59e0b' : '#334155'),
-               borderRadius: 8, padding: '6px 14px', color: alerts.length ? '#f59e0b' : '#64748b',
-               fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-      🔔 Alerts
-      {alerts.length > 0 && (
-        <span style={{ background: '#f59e0b', color: '#0f172a', borderRadius: 10, padding: '1px 6px', fontSize: 10, fontWeight: 800 }}>
-          {alerts.length}
-        </span>
-      )}
-    </button>
+  // ── Derived data for UI ───────────────────────────────────────────────────
+  var visAlerts = symFilter==='ALL' ? alerts : alerts.filter(function(a){return a.symbol===symFilter;});
+
+  // Active levels for header strip
+  var activeMap = {};
+  visAlerts.forEach(function(a) {
+    if (!a.strike) return;
+    var k = a.symbol+'|'+a.strike+'|'+a.side;
+    if (!activeMap[k] || a.score > activeMap[k].score) activeMap[k] = a;
+  });
+  var activeLevels = Object.values(activeMap).sort(function(a,b){return b.score-a.score;}).slice(0,6);
+
+  // Strike view groups
+  var strikGroups = {};
+  visAlerts.forEach(function(a) {
+    var k = a.strike ? (a.symbol+'|'+a.strike+'|'+a.side) : ('zone|'+a.type);
+    if (!strikGroups[k]) strikGroups[k] = { key:k, strike:a.strike, side:a.side, symbol:a.symbol, tag:a.tag, alerts:[], maxScore:0 };
+    strikGroups[k].alerts.push(a);
+    if (a.score > strikGroups[k].maxScore) strikGroups[k].maxScore = a.score;
+  });
+  var groupList = Object.values(strikGroups).sort(function(a,b){return b.maxScore-a.maxScore;});
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+  function Badge(p) {
+    return React.createElement('span',{style:{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:3,background:p.bg,color:p.col,border:p.border||'none'}},p.label);
+  }
+
+  function AlertCard(p) {
+    var a   = p.alert;
+    var cb  = convBar(a.score);
+    var sc  = strikeColor(a.symbol+'|'+a.strike+'|'+a.side);
+    var lvlCol = a.level==='MEGA'?'#f59e0b':a.level==='ZONE'?'#94a3b8':'#60a5fa';
+    return React.createElement('div',{
+      style:{marginBottom:8,padding:'10px 14px',background:'#1e293b',
+             borderRadius:8,borderLeft:'3px solid '+sc,border:'1px solid #334155',borderLeftWidth:3,borderLeftColor:sc}
+    },
+      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}},
+        React.createElement('div',{style:{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',flex:1}},
+          React.createElement('span',{style:{fontSize:13}},a.emoji),
+          React.createElement('span',{style:{fontSize:11,fontWeight:800,color:cb.col}},a.type),
+          React.createElement(Badge,{label:a.tf,bg:'#0f172a',col:'#64748b',border:'1px solid #334155'}),
+          React.createElement(Badge,{label:a.level,bg:lvlCol+'18',col:lvlCol}),
+          a.level==='MEGA' && React.createElement(Badge,{label:'★ MAX',bg:'#f59e0b22',col:'#f59e0b'})
+        ),
+        React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center',flexShrink:0,marginLeft:8}},
+          React.createElement('span',{style:{fontSize:9,color:'#60a5fa',fontWeight:600}},a.symbol),
+          React.createElement('span',{style:{fontSize:9,color:'#475569'}},a.time)
+        )
+      ),
+      React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:4}},
+        React.createElement('span',{style:{fontFamily:'monospace',fontSize:10,color:cb.col,letterSpacing:1}},cb.bars),
+        React.createElement('span',{style:{fontSize:10,fontWeight:800,color:cb.col}},a.score+'/10')
+      ),
+      React.createElement('p',{style:{fontSize:10,color:'#94a3b8',margin:'0 0 4px',lineHeight:1.5}},a.desc),
+      React.createElement('div',{style:{display:'flex',gap:10,flexWrap:'wrap'}},
+        React.createElement('span',{style:{fontSize:9,color:'#475569'}}, 'Δ '+a.delta),
+        a.fromOpen && React.createElement('span',{style:{fontSize:9,color:'#475569'}}, 'from open: '+a.fromOpen),
+        React.createElement('span',{style:{fontSize:9,color:'#475569'}}, a.pct+'th pct'),
+        React.createElement('span',{style:{fontSize:9,color:'#475569'}}, a.samples+' samples'),
+        a.escNote && React.createElement('span',{style:{fontSize:9,color:'#a78bfa'}}, a.escNote)
+      )
+    );
+  }
+
+  // ── Alert button ──────────────────────────────────────────────────────────
+  var megaCount = alerts.filter(function(a){return a.level==='MEGA';}).length;
+  var alertBtn = React.createElement('button',{
+    onClick:function(){setOpen(true);},
+    style:{background:'#1e293b',border:'1px solid '+(alerts.length?'#f59e0b':'#334155'),
+           borderRadius:8,padding:'6px 14px',color:alerts.length?'#f59e0b':'#64748b',
+           fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}
+  },
+    '🔔 Alerts',
+    alerts.length > 0 && React.createElement('span',{
+      style:{background:megaCount?'#f59e0b':'#f59e0b',color:'#0f172a',borderRadius:10,padding:'1px 6px',fontSize:10,fontWeight:800}
+    }, alerts.length)
   );
 
-  return (
-    <>
-      {/* Toast popup */}
-      {toast && (
-        <div onClick={function() { setOpen(true); setToast(null); }}
-          style={{ position: 'fixed', top: 80, right: 20, zIndex: 2000, cursor: 'pointer', maxWidth: 360,
-                   background: '#1e293b', border: '1px solid #334155', borderLeft: '3px solid ' + toast.confCol,
-                   borderRadius: 10, padding: '12px 16px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                <span>{toast.emoji}</span>
-                <span style={{ fontSize: 12, fontWeight: 800, color: toast.confCol }}>{toast.type}</span>
-                <span style={{ fontSize: 10, color: '#475569' }}>{toast.symbol} · {toast.time}</span>
-              </div>
-              <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 4px', lineHeight: 1.4 }}>{toast.desc}</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: toast.confCol }}>{toast.conf}</span>
-                <span style={{ fontSize: 9, color: '#475569' }}>COI Δ {toast.delta}</span>
-                <span style={{ fontSize: 9, color: '#475569' }}>{toast.zone}</span>
-              </div>
-            </div>
-            <button onClick={function(e) { e.stopPropagation(); setToast(null); }}
-              style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }}>✕</button>
-          </div>
-        </div>
-      )}
+  return React.createElement(React.Fragment, null,
+    // ── Toast ───────────────────────────────────────────────────────────────
+    toast && React.createElement('div',{
+      onClick:function(){setOpen(true);setToast(null);},
+      style:{position:'fixed',top:80,right:20,zIndex:2000,cursor:'pointer',maxWidth:400,
+             background:'#1e293b',border:'1px solid #334155',borderLeft:'3px solid '+convBar(toast.score).col,
+             borderRadius:10,padding:'12px 16px',boxShadow:'0 8px 32px rgba(0,0,0,0.7)'}
+    },
+      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',gap:10}},
+        React.createElement('div',{style:{flex:1}},
+          React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}},
+            React.createElement('span',{style:{fontSize:13}},toast.emoji),
+            React.createElement('span',{style:{fontSize:12,fontWeight:800,color:convBar(toast.score).col}},toast.type),
+            React.createElement('span',{style:{fontFamily:'monospace',fontSize:10,color:convBar(toast.score).col}},convBar(toast.score).bars),
+            React.createElement('span',{style:{fontSize:10,fontWeight:800,color:convBar(toast.score).col}},toast.score+'/10')
+          ),
+          React.createElement('div',{style:{display:'flex',gap:8,marginBottom:4}},
+            React.createElement('span',{style:{fontSize:10,color:'#60a5fa',fontWeight:600}},toast.symbol),
+            React.createElement('span',{style:{fontSize:10,color:'#475569'}},' · '+toast.time+' · 🕐 '+toast.tf)
+          ),
+          React.createElement('p',{style:{fontSize:11,color:'#94a3b8',margin:'0 0 4px',lineHeight:1.4}},toast.desc),
+          React.createElement('div',{style:{display:'flex',gap:8}},
+            React.createElement('span',{style:{fontSize:9,color:'#475569'}},'Δ '+toast.delta),
+            React.createElement('span',{style:{fontSize:9,color:'#475569'}},toast.pct+'th pct · '+toast.samples+' samples')
+          )
+        ),
+        React.createElement('button',{
+          onClick:function(e){e.stopPropagation();setToast(null);},
+          style:{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:14,padding:0,flexShrink:0}
+        },'✕')
+      )
+    ),
 
-      {/* Drawer */}
-      {open && (
-        <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 420, zIndex: 1500,
-                      background: '#0f172a', borderLeft: '1px solid #334155',
-                      display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.6)' }}>
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid #1e293b',
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <p style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>🔔 Alert Log</p>
-              <p style={{ fontSize: 10, color: '#475569', margin: '2px 0 0' }}>NIFTY + BANKNIFTY · Today · {alerts.length} alerts</p>
-            </div>
-            <button onClick={function() { setOpen(false); }}
-              style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
-                       padding: '6px 12px', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}>✕ Close</button>
-          </div>
+    // ── Drawer ──────────────────────────────────────────────────────────────
+    open && React.createElement('div',{
+      style:{position:'fixed',top:0,right:0,bottom:0,width:500,zIndex:1500,
+             background:'#0a1628',borderLeft:'1px solid #334155',
+             display:'flex',flexDirection:'column',boxShadow:'-8px 0 40px rgba(0,0,0,0.7)'}
+    },
+      // Header
+      React.createElement('div',{style:{padding:'14px 20px',borderBottom:'1px solid #1e293b'}},
+        React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}},
+          React.createElement('div',null,
+            React.createElement('p',{style:{fontSize:14,fontWeight:700,color:'#f1f5f9',margin:0}},'🔔 Alert Log'),
+            React.createElement('p',{style:{fontSize:10,color:'#475569',margin:'2px 0 0'}},
+              visAlerts.length+' alerts · percentile-based · 9m/15m/30m/1hr/2hr'
+            )
+          ),
+          React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center'}},
+            // Symbol filter
+            ['ALL','NIFTY','BANKNIFTY'].map(function(s) {
+              return React.createElement('button',{key:s,onClick:function(){setSymFilter(s);},
+                style:{padding:'3px 8px',borderRadius:4,fontSize:10,fontWeight:600,cursor:'pointer',
+                       background:symFilter===s?'#8b5cf6':'#1e293b',color:symFilter===s?'#fff':'#64748b',
+                       border:'1px solid '+(symFilter===s?'#8b5cf6':'#334155')}
+              },s);
+            }),
+            React.createElement('button',{onClick:function(){setOpen(false);},
+              style:{background:'#1e293b',border:'1px solid #334155',borderRadius:8,
+                     padding:'5px 10px',color:'#94a3b8',cursor:'pointer',fontSize:11}
+            },'✕')
+          )
+        ),
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
-            {alerts.length === 0 ? (
-              <p style={{ color: '#475569', fontSize: 12, textAlign: 'center', marginTop: 40 }}>No alerts yet today</p>
-            ) : alerts.map(function(a) {
-              return (
-                <div key={a.id} style={{ marginBottom: 10, padding: '10px 14px', background: '#1e293b',
-                                          border: '1px solid #334155', borderLeft: '3px solid ' + a.confCol, borderRadius: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <span>{a.emoji}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: a.confCol }}>{a.type}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <span style={{ fontSize: 9, color: '#60a5fa', fontWeight: 600 }}>{a.symbol}</span>
-                      <span style={{ fontSize: 9, color: '#475569' }}>{a.time}</span>
-                    </div>
-                  </div>
-                  <p style={{ fontSize: 10, color: '#94a3b8', margin: '0 0 4px', lineHeight: 1.5 }}>{a.desc}</p>
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: a.confCol }}>{a.conf}</span>
-                    <span style={{ fontSize: 9, color: '#475569' }}>Zone: {a.zone}</span>
-                    <span style={{ fontSize: 9, color: '#475569' }}>Δ {a.delta}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        // Active levels strip
+        activeLevels.length > 0 && React.createElement('div',{
+          style:{display:'flex',gap:6,flexWrap:'wrap'}
+        },
+          activeLevels.map(function(a,i) {
+            var cb = convBar(a.score);
+            var sc = strikeColor(a.symbol+'|'+a.strike+'|'+a.side);
+            return React.createElement('div',{key:i,
+              style:{display:'flex',alignItems:'center',gap:5,padding:'3px 8px',
+                     background:'#1e293b',borderRadius:6,border:'1px solid '+sc+'44'}
+            },
+              React.createElement('span',{style:{fontSize:9,color:sc,fontWeight:700}},a.symbol),
+              React.createElement('span',{style:{fontSize:9,color:'#94a3b8'}},a.strike),
+              React.createElement('span',{style:{fontSize:9,color:a.dir==='unwind'?'#4ade80':'#f87171'}},a.dir==='unwind'?'↓':'↑'),
+              React.createElement('span',{style:{fontFamily:'monospace',fontSize:8,color:cb.col}},a.score+'/10')
+            );
+          })
+        ),
 
-          <div style={{ padding: '12px 16px', borderTop: '1px solid #1e293b', display: 'flex', gap: 8 }}>
-            <button onClick={function() {
-              if (!alerts.length) return;
-              var csv = 'Time,Symbol,Alert,Confidence,Zone,Delta,Description\n' +
-                alerts.map(function(a) { return [a.time,a.symbol,a.type,a.conf,a.zone,a.delta,'"'+a.desc+'"'].join(','); }).join('\n');
-              var blob = new Blob([csv], {type:'text/csv'});
-              var url  = URL.createObjectURL(blob);
-              var el   = document.createElement('a'); el.href=url; el.download='alerts_'+new Date().toISOString().slice(0,10)+'.csv'; el.click();
-            }} style={{ flex:1, padding:'8px', background:'#1e293b', border:'1px solid #334155',
-                        borderRadius:8, color:'#94a3b8', cursor:'pointer', fontSize:11, fontWeight:600 }}>
-              📥 Export CSV
-            </button>
-            <button onClick={function() { onClear && onClear(); }}
-              style={{ flex:1, padding:'8px', background:'#1e293b', border:'1px solid #334155',
-                       borderRadius:8, color:'#f87171', cursor:'pointer', fontSize:11, fontWeight:600 }}>
-              🗑 Clear All
-            </button>
-          </div>
-        </div>
-      )}
+        // Tab bar
+        React.createElement('div',{style:{display:'flex',gap:0,marginTop:10,borderRadius:8,overflow:'hidden',border:'1px solid #334155'}},
+          ['feed','strikes'].map(function(t) {
+            return React.createElement('button',{key:t,onClick:function(){setTab(t);},
+              style:{flex:1,padding:'6px',fontSize:11,fontWeight:600,cursor:'pointer',
+                     background:tab===t?'#1e293b':'transparent',
+                     color:tab===t?'#f1f5f9':'#475569',border:'none'}
+            }, t==='feed'?'📡 Live Feed':'📊 Strike View');
+          })
+        )
+      ),
 
-      {alertBtn}
-    </>
+      // Content
+      React.createElement('div',{style:{flex:1,overflowY:'auto',padding:'10px 14px'}},
+        visAlerts.length === 0
+          ? React.createElement('p',{style:{color:'#475569',fontSize:12,textAlign:'center',marginTop:40}},
+              'No alerts yet · building distribution (need '+MIN_SAMPLES+' samples per channel)')
+
+          : tab === 'feed'
+            // LIVE FEED — newest first, color-coded by strike
+            ? React.createElement('div',null,
+                visAlerts.map(function(a) { return React.createElement(AlertCard,{key:a.id,alert:a}); })
+              )
+
+            // STRIKE VIEW — grouped by strike, sorted by score
+            : React.createElement('div',null,
+                groupList.map(function(g) {
+                  var sc = strikeColor(g.symbol+'|'+g.strike+'|'+g.side);
+                  var cb = convBar(g.maxScore);
+                  var latestDir = g.alerts[0].dir;
+                  return React.createElement('div',{key:g.key,style:{marginBottom:12,border:'1px solid #1e293b',borderRadius:10,overflow:'hidden'}},
+                    // Group header
+                    React.createElement('div',{
+                      style:{padding:'8px 14px',background:'#1e293b',display:'flex',justifyContent:'space-between',alignItems:'center',
+                             borderLeft:'3px solid '+sc}
+                    },
+                      React.createElement('div',{style:{display:'flex',gap:8,alignItems:'center'}},
+                        React.createElement('span',{style:{fontSize:11,fontWeight:700,color:sc}},g.symbol+' '+g.strike),
+                        React.createElement('span',{style:{fontSize:10,color:'#64748b'}},g.tag||''),
+                        React.createElement('span',{style:{fontSize:11,color:latestDir==='unwind'?'#4ade80':'#f87171',fontWeight:700}},
+                          latestDir==='unwind'?'↓ UNWINDING':'↑ BUILDING')
+                      ),
+                      React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center'}},
+                        React.createElement('span',{style:{fontFamily:'monospace',fontSize:10,color:cb.col}},cb.bars),
+                        React.createElement('span',{style:{fontSize:10,fontWeight:800,color:cb.col}},g.maxScore+'/10'),
+                        React.createElement('span',{style:{fontSize:9,color:'#475569'}},g.alerts.length+'×')
+                      )
+                    ),
+                    // Timeline of alerts for this strike
+                    React.createElement('div',{style:{padding:'6px 10px',display:'flex',flexDirection:'column',gap:4}},
+                      g.alerts.map(function(a) {
+                        var acb = convBar(a.score);
+                        return React.createElement('div',{key:a.id,
+                          style:{display:'flex',gap:8,alignItems:'center',padding:'4px 8px',
+                                 background:a.level==='MEGA'?'rgba(245,158,11,0.08)':'transparent',
+                                 borderRadius:4,borderLeft:'2px solid '+(a.dir==='unwind'?'#4ade80':'#f87171')}
+                        },
+                          React.createElement('span',{style:{fontSize:10,color:'#475569',minWidth:36}},a.time),
+                          React.createElement('span',{style:{fontSize:9,fontWeight:700,minWidth:28,color:'#64748b'}},a.tf),
+                          React.createElement('span',{style:{fontFamily:'monospace',fontSize:9,color:acb.col}},a.score+'/10'),
+                          React.createElement('span',{style:{fontSize:9,color:a.dir==='unwind'?'#4ade80':'#f87171',fontWeight:700}},
+                            a.dir==='unwind'?'↓':'↑'),
+                          React.createElement('span',{style:{fontSize:9,color:'#475569'}},'Δ '+a.delta),
+                          React.createElement('span',{style:{fontSize:9,color:'#64748b'}},a.pct+'th'),
+                          a.level==='MEGA' && React.createElement('span',{style:{fontSize:9,color:'#f59e0b',fontWeight:700}},'★')
+                        );
+                      })
+                    )
+                  );
+                })
+              )
+      ),
+
+      // Footer
+      React.createElement('div',{style:{padding:'10px 14px',borderTop:'1px solid #1e293b',display:'flex',gap:8}},
+        React.createElement('button',{
+          onClick:function() {
+            if (!visAlerts.length) return;
+            var csv = 'Time,Symbol,Level,TF,Alert,Score,Pct,Samples,Delta,FromOpen,Description\n' +
+              visAlerts.map(function(a){
+                return [a.time,a.symbol,a.level,a.tf,a.type,a.score,a.pct,a.samples||'',a.delta,a.fromOpen||'','"'+a.desc+'"'].join(',');
+              }).join('\n');
+            var blob = new Blob([csv],{type:'text/csv'});
+            var url  = URL.createObjectURL(blob);
+            var el   = document.createElement('a'); el.href=url; el.download='alerts_'+new Date().toISOString().slice(0,10)+'.csv'; el.click();
+          },
+          style:{flex:1,padding:'7px',background:'#1e293b',border:'1px solid #334155',
+                 borderRadius:8,color:'#94a3b8',cursor:'pointer',fontSize:11,fontWeight:600}
+        },'📥 Export'),
+        React.createElement('button',{
+          onClick:function(){onClear&&onClear();},
+          style:{flex:1,padding:'7px',background:'#1e293b',border:'1px solid #334155',
+                 borderRadius:8,color:'#f87171',cursor:'pointer',fontSize:11,fontWeight:600}
+        },'🗑 Clear All')
+      )
+    ),
+
+    alertBtn
   );
 }
+
 
 export default function Options() {
   var { user }  = useAuth();
@@ -2730,8 +3187,7 @@ export default function Options() {
   var [lastUpdate, setLastUpdate] = useState(null);
   var [showPreTrade, setShowPreTrade] = useState(false);
   var [alerts, setAlerts]             = useState([]);
-  var prevChainRef   = useRef([]);
-  var prevChainBNRef = useRef([]);
+
   var intervalRef                 = useRef(null);
   var overviewRef                 = useRef(null);
   var prevPCRRef                  = useRef({});
@@ -2762,8 +3218,6 @@ export default function Options() {
                 pcr_5strike: prev.pcr_5strike,
               };
             }
-            if (sym === 'NIFTY'     && prev && prev.chain) prevChainRef.current   = prev.chain;
-            if (sym === 'BANKNIFTY' && prev && prev.chain) prevChainBNRef.current = prev.chain;
             return d;
           });
           setLoading(false);
@@ -2841,14 +3295,14 @@ export default function Options() {
             ⚡ Pre-Trade Check
           </button>
           <AlertSystem
-            chain={data ? (data.chain || []) : []}
-            chainBN={bnData ? (bnData.chain || []) : []}
+            chain={data ? (data.full_chain || data.chain || []) : []}
+            chainBN={bnData ? (bnData.full_chain || bnData.chain || []) : []}
             atmNifty={data ? (data.atm_strike || 0) : 0}
             atmBN={bnData ? (bnData.atm_strike || 0) : 0}
-            prevChain={prevChainRef.current}
-            prevChainBN={prevChainBNRef.current}
+            spotNifty={data ? (data.spot_price || 0) : 0}
+            spotBN={bnData ? (bnData.spot_price || 0) : 0}
             alerts={alerts}
-            onAlerts={function(fired) { setAlerts(function(prev) { return fired.concat(prev); }); }}
+            onAlerts={function(fired) { setAlerts(function(prev) { return fired.concat(prev).slice(0, 200); }); }}
             onClear={function() { setAlerts([]); }}
           />
           <button
