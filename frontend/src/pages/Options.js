@@ -2533,6 +2533,163 @@ function ZoneSplit(props) {
 
 
 // ── Alert System ─────────────────────────────────────────────────────────────
+// ── Strike Monitor — live scoreboard, sits below ZoneSplit ───────────────────
+function StrikeMonitor(props) {
+  var chain   = props.chain   || [];
+  var atm     = props.atm     || 0;
+  var spot    = props.spot    || atm;
+  var symbol  = props.symbol  || 'NIFTY';
+  var alerts  = props.alerts  || [];
+  var inline  = props.inline  || false;
+
+  if (!chain.length || !atm) return null;
+
+  var MIN_OI = 50000;
+  var step   = symbol === 'BANKNIFTY' ? 100 : 50;
+
+  function fmtOI(n) {
+    if (!n) return '—';
+    if (n >= 10000000) return (n/10000000).toFixed(1)+'Cr';
+    if (n >= 100000)   return (n/100000).toFixed(1)+'L';
+    if (n >= 1000)     return (n/1000).toFixed(0)+'K';
+    return n;
+  }
+  function fmtCOI(n) {
+    if (!n && n !== 0) return '—';
+    var a = Math.abs(n), s = n > 0 ? '+' : '-';
+    if (a >= 100000) return s+(a/100000).toFixed(1)+'L';
+    if (a >= 1000)   return s+(a/1000).toFixed(0)+'K';
+    return s+a;
+  }
+
+  var active = chain
+    .filter(function(r) { return (r.ce_oi||0) > MIN_OI || (r.pe_oi||0) > MIN_OI; })
+    .sort(function(a,b) { return b.strike - a.strike; });
+
+  // Latest alert state per strike+side (last 30 min)
+  var stateMap = {};
+  var cutoff   = Date.now() - 30*60*1000;
+  alerts.filter(function(a) { return a.symbol===symbol && a.ts && a.ts>cutoff && a.strike && a.side; })
+    .forEach(function(a) {
+      var k = a.strike+'|'+a.side;
+      if (!stateMap[k] || a.ts > stateMap[k].ts) stateMap[k] = a;
+    });
+
+  function getSignal(row, side) {
+    var coi = side==='ce' ? (row.ce_chg_oi||0) : (row.pe_chg_oi||0);
+    var oi  = side==='ce' ? (row.ce_oi||0)     : (row.pe_oi||0);
+    if (oi < MIN_OI) return null;
+    var st = stateMap[row.strike+'|'+side];
+    var sigLabel, sigCol, sigBg;
+    if (st) {
+      sigLabel = st.dir==='unwind' ? 'UNWIND ↓' : 'WRITING ↑';
+      sigCol   = side==='ce'
+        ? (st.dir==='unwind' ? '#4ade80' : '#f87171')
+        : (st.dir==='unwind' ? '#f87171' : '#4ade80');
+      sigBg    = sigCol + '18';
+    } else {
+      var rel = oi > 0 ? Math.abs(coi)/oi : 0;
+      if (rel < 0.01)   { sigLabel='—';         sigCol='#334155'; sigBg='transparent'; }
+      else if (coi > 0) { sigLabel='WRITING ↑'; sigCol=side==='ce'?'#f87171':'#4ade80'; sigBg='transparent'; }
+      else              { sigLabel='UNWIND ↓';  sigCol=side==='ce'?'#4ade80':'#f87171'; sigBg='transparent'; }
+    }
+    return { label:sigLabel, col:sigCol, bg:sigBg, pct:st?st.pct:null, coi:coi, oi:oi };
+  }
+
+  var wrapper = inline
+    ? { background:'transparent', border:'none', borderRadius:0, overflow:'hidden' }
+    : { background:'#0f172a', border:'1px solid #1e293b', borderRadius:12, overflow:'hidden' };
+
+  return (
+    <div style={wrapper}>
+      {!inline && (
+        <div style={{ padding:'12px 20px', borderBottom:'1px solid #1e293b', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div>
+            <p style={{ fontSize:11, fontWeight:700, color:'#64748b', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+              Strike Monitor — {symbol} @ {atm}
+            </p>
+            <p style={{ fontSize:10, color:'#334155', margin:'2px 0 0' }}>
+              {active.length} active strikes · OI &gt; 50K · signals from alert history (last 30 min)
+            </p>
+          </div>
+          <div style={{ display:'flex', gap:14, fontSize:10, color:'#475569' }}>
+            <span><span style={{ color:'#f87171' }}>■</span> CE WRITE &nbsp;<span style={{ color:'#4ade80' }}>■</span> CE UNWIND</span>
+            <span><span style={{ color:'#4ade80' }}>■</span> PE WRITE &nbsp;<span style={{ color:'#f87171' }}>■</span> PE UNWIND</span>
+          </div>
+        </div>
+      )}
+
+      <div style={{ overflowX:'auto', maxHeight: inline ? 400 : 520, overflowY:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+          <thead style={{ position:'sticky', top:0, zIndex:1 }}>
+            <tr style={{ background:'#1e293b' }}>
+              <th style={{ padding:'7px 10px', color:'#f87171', textAlign:'right',  fontWeight:600, whiteSpace:'nowrap' }}>CE OI</th>
+              <th style={{ padding:'7px 10px', color:'#f87171', textAlign:'right',  fontWeight:600, whiteSpace:'nowrap' }}>CE COI</th>
+              <th style={{ padding:'7px 12px', color:'#f87171', textAlign:'right',  fontWeight:600, whiteSpace:'nowrap' }}>CE Signal</th>
+              <th style={{ padding:'7px 6px',  color:'#f87171', textAlign:'right',  fontWeight:600, whiteSpace:'nowrap' }}>Conf%</th>
+              <th style={{ padding:'7px 16px', color:'#f1f5f9', textAlign:'center', fontWeight:700 }}>Strike</th>
+              <th style={{ padding:'7px 6px',  color:'#4ade80', textAlign:'left',   fontWeight:600, whiteSpace:'nowrap' }}>Conf%</th>
+              <th style={{ padding:'7px 12px', color:'#4ade80', textAlign:'left',   fontWeight:600, whiteSpace:'nowrap' }}>PE Signal</th>
+              <th style={{ padding:'7px 10px', color:'#4ade80', textAlign:'left',   fontWeight:600, whiteSpace:'nowrap' }}>PE COI</th>
+              <th style={{ padding:'7px 10px', color:'#4ade80', textAlign:'left',   fontWeight:600, whiteSpace:'nowrap' }}>PE OI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {active.map(function(row) {
+              var ce   = getSignal(row, 'ce');
+              var pe   = getSignal(row, 'pe');
+              var isAtm  = row.strike === atm;
+              var isNear = Math.abs(row.strike - atm) <= step * 2;
+              var bg   = isAtm ? 'rgba(96,165,250,0.10)' : isNear ? 'rgba(96,165,250,0.03)' : 'transparent';
+              return (
+                <tr key={row.strike} style={{ background:bg, borderBottom:'1px solid #1e293b22' }}>
+                  <td style={{ padding:'7px 10px', textAlign:'right', color:'#f87171', fontWeight:600 }}>{ce?fmtOI(ce.oi):'—'}</td>
+                  <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:600, color:ce&&ce.coi>0?'#f87171':ce&&ce.coi<0?'#4ade80':'#334155' }}>{ce?fmtCOI(ce.coi):'—'}</td>
+                  <td style={{ padding:'5px 12px', textAlign:'right' }}>
+                    {ce && ce.label !== '—'
+                      ? <span style={{ padding:'2px 8px', borderRadius:4, fontSize:10, fontWeight:700, color:ce.col, background:ce.bg, border:'1px solid '+ce.col+'44' }}>{ce.label}</span>
+                      : <span style={{ color:'#334155' }}>—</span>}
+                  </td>
+                  <td style={{ padding:'7px 6px', textAlign:'right' }}>
+                    {ce && ce.pct
+                      ? <span style={{ fontSize:10, fontWeight:700, color:ce.pct>=92?'#4ade80':ce.pct>=82?'#f59e0b':'#64748b' }}>{ce.pct}%</span>
+                      : <span style={{ color:'#334155', fontSize:10 }}>—</span>}
+                  </td>
+                  <td style={{ padding:'7px 16px', textAlign:'center' }}>
+                    <span style={{ fontSize:isAtm?13:12, fontWeight:isAtm?800:600, color:isAtm?'#60a5fa':'#94a3b8' }}>{row.strike}</span>
+                    {isAtm && <span style={{ display:'block', fontSize:8, color:'#60a5fa', fontWeight:700 }}>ATM</span>}
+                  </td>
+                  <td style={{ padding:'7px 6px', textAlign:'left' }}>
+                    {pe && pe.pct
+                      ? <span style={{ fontSize:10, fontWeight:700, color:pe.pct>=92?'#4ade80':pe.pct>=82?'#f59e0b':'#64748b' }}>{pe.pct}%</span>
+                      : <span style={{ color:'#334155', fontSize:10 }}>—</span>}
+                  </td>
+                  <td style={{ padding:'5px 12px', textAlign:'left' }}>
+                    {pe && pe.label !== '—'
+                      ? <span style={{ padding:'2px 8px', borderRadius:4, fontSize:10, fontWeight:700, color:pe.col, background:pe.bg, border:'1px solid '+pe.col+'44' }}>{pe.label}</span>
+                      : <span style={{ color:'#334155' }}>—</span>}
+                  </td>
+                  <td style={{ padding:'7px 10px', textAlign:'left', fontWeight:600, color:pe&&pe.coi>0?'#4ade80':pe&&pe.coi<0?'#f87171':'#334155' }}>{pe?fmtCOI(pe.coi):'—'}</td>
+                  <td style={{ padding:'7px 10px', textAlign:'left', color:'#4ade80', fontWeight:600 }}>{pe?fmtOI(pe.oi):'—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {!inline && (
+        <div style={{ padding:'6px 20px', fontSize:9, color:'#334155', lineHeight:1.8 }}>
+          CE WRITE = call writers adding (resistance) · CE UNWIND = call writers covering (bullish) ·
+          PE WRITE = put writers adding (support) · PE UNWIND = put writers covering (bearish) ·
+          Conf% = percentile rank vs today · signals from last 30 min of alert history
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function AlertSystem(props) {
   var chain     = props.chain     || [];
   var chainBN   = props.chainBN   || [];
@@ -2544,634 +2701,347 @@ function AlertSystem(props) {
   var onAlerts  = props.onAlerts;
   var onClear   = props.onClear;
 
-  var [open, setOpen]     = React.useState(false);
-  var [tab, setTab]       = React.useState('feed');   // 'feed' | 'strikes'
-  var [toast, setToast]   = React.useState(null);
-  var [symFilter, setSymFilter] = React.useState('ALL'); // 'ALL'|'NIFTY'|'BANKNIFTY'
+  var [open, setOpen]           = React.useState(false);
+  var [toast, setToast]         = React.useState(null);
+  var [tab, setTab]             = React.useState('feed');
+  var [symFilter, setSymFilter] = React.useState('NIFTY');
 
-  // ── Rolling chain history (42 snaps = 2hr at 3-min) ──────────────────────
   var chainHistRef   = React.useRef([]);
   var chainHistBNRef = React.useRef([]);
-
-  // ── Delta distributions per channel ──────────────────────────────────────
-  var distRef = React.useRef({});
-
-  // ── Cooldown tracker: key → last fired ts ────────────────────────────────
-  var cooldownRef = React.useRef({});
-
-  // ── Strike color map for visual continuity in feed ───────────────────────
-  var strikeColors = ['#60a5fa','#f59e0b','#a78bfa','#f87171','#4ade80','#fb923c','#38bdf8','#e879f9'];
-  var strikeColorMap = React.useRef({});
-  function strikeColor(key) {
-    if (!strikeColorMap.current[key]) {
-      var idx = Object.keys(strikeColorMap.current).length % strikeColors.length;
-      strikeColorMap.current[key] = strikeColors[idx];
-    }
-    return strikeColorMap.current[key];
-  }
-
-  // ── Timeframes ────────────────────────────────────────────────────────────
-  var TFS = [
-    { snaps: 3,  label: '9min',  cooldownMs: 9*60*1000  },
-    { snaps: 5,  label: '15min', cooldownMs: 15*60*1000 },
-    { snaps: 10, label: '30min', cooldownMs: 30*60*1000 },
-    { snaps: 20, label: '1hr',   cooldownMs: 60*60*1000 },
-    { snaps: 40, label: '2hr',   cooldownMs: 120*60*1000},
-  ];
+  var distRef        = React.useRef({});
+  var stateRef       = React.useRef({});
 
   var MIN_OI      = 50000;
-  var MIN_SAMPLES = 5;
-  var ALERT_PCT   = 80;
+  var MIN_SAMPLES = 8;
+  var ALERT_PCT   = 82;
   var HIGH_PCT    = 92;
-  var MED_PCT     = 82;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   function pctRank(dist, val) {
-    if (!dist || !dist.length) return 0;
-    var abs   = Math.abs(val);
-    var below = dist.filter(function(v) { return v < abs; }).length;
-    return Math.round((below / dist.length) * 100);
+    if (!dist || dist.length < MIN_SAMPLES) return 0;
+    var a = Math.abs(val);
+    return Math.round(dist.filter(function(v){return v<a;}).length / dist.length * 100);
   }
-
   function addDist(key, val) {
     if (!distRef.current[key]) distRef.current[key] = [];
     distRef.current[key].push(Math.abs(val));
     if (distRef.current[key].length > 80) distRef.current[key].shift();
   }
-
   function fmt(n) {
-    var a = Math.abs(n);
-    return (n > 0 ? '+' : '-') + (a >= 100000 ? (a/100000).toFixed(1)+'L' : a >= 1000 ? (a/1000).toFixed(0)+'K' : a);
+    var a=Math.abs(n);
+    return (n>0?'+':'-')+(a>=100000?(a/100000).toFixed(1)+'L':a>=1000?(a/1000).toFixed(0)+'K':a);
   }
-
   function nowStr() {
-    var d = new Date();
-    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    var d=new Date();
+    return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
   }
-
-  // ── Conviction score ──────────────────────────────────────────────────────
-  function conviction(pct, oiRank, tfSnaps, tfCount, isUnwind) {
-    var p = pct >= HIGH_PCT ? 3 : pct >= MED_PCT ? 2 : 1;
-    var o = oiRank === 1 ? 3 : oiRank === 2 ? 2 : oiRank === 3 ? 1.5 : 1;
-    var t = tfSnaps >= 20 ? 2 : tfSnaps >= 10 ? 1 : 0;
-    var c = tfCount >= 3 ? 1 : 0;
-    var u = isUnwind ? 1 : 0;
-    return Math.min(10, Math.round(p + o + t + c + u));
-  }
-
-  function convBar(score) {
-    var filled = Math.round(score);
-    var col    = score >= 8 ? '#4ade80' : score >= 6 ? '#60a5fa' : score >= 4 ? '#f59e0b' : '#64748b';
-    var bars   = '';
-    for (var i = 0; i < 10; i++) bars += i < filled ? '█' : '░';
-    return { bars: bars, col: col };
-  }
-
-  // ── Get OI rank for a strike ──────────────────────────────────────────────
   function getOIRank(ch, strike, side) {
-    var sorted = ch
-      .filter(function(r) { return (side==='ce'?(r.ce_oi||0):(r.pe_oi||0)) > MIN_OI; })
-      .sort(function(a,b) { return (side==='ce'?b.ce_oi-a.ce_oi:b.pe_oi-a.pe_oi); });
-    for (var i = 0; i < sorted.length; i++) {
-      if (sorted[i].strike === strike) return i + 1;
-    }
+    var sorted=ch.filter(function(r){return (side==='ce'?(r.ce_oi||0):(r.pe_oi||0))>MIN_OI;})
+                 .sort(function(a,b){return side==='ce'?b.ce_oi-a.ce_oi:b.pe_oi-a.pe_oi;});
+    for (var i=0;i<sorted.length;i++) if(sorted[i].strike===strike) return i+1;
     return 99;
   }
 
-  // ── Check cooldown ────────────────────────────────────────────────────────
-  function canFire(key, cooldownMs, pct, prevPct) {
-    var last = cooldownRef.current[key] || 0;
-    var now  = Date.now();
-    if (now - last < cooldownMs) {
-      // Allow re-fire if percentile jumped significantly (escalation)
-      if (prevPct && pct >= prevPct + 8) return true;
-      return false;
-    }
-    return true;
-  }
-
-  // ── Count how many timeframes already fired for this key today ────────────
-  function tfCount(sym, strike, side, direction) {
-    var base = sym + '|' + strike + '|' + side + '|' + direction + '|';
-    return alerts.filter(function(a) { return a.cdKey && a.cdKey.indexOf(base) === 0; }).length;
-  }
-
-  // ── Zone COI ─────────────────────────────────────────────────────────────
-  function zoneCOI(ch, atm, spot, minPct, maxPct, dir, side) {
-    var base = spot || atm;
-    return ch.filter(function(r) {
-      var dist = Math.abs(r.strike - atm);
-      return dist >= minPct*base && dist < maxPct*base &&
-             ((r.ce_oi||0)>MIN_OI||(r.pe_oi||0)>MIN_OI) &&
-             (dir===0||(dir>0&&r.strike>atm)||(dir<0&&r.strike<atm));
-    }).reduce(function(s,r){return s+(side==='ce'?(r.ce_chg_oi||0):(r.pe_chg_oi||0));},0);
-  }
-
-  // ── Main alert computation ────────────────────────────────────────────────
-  function computeAlerts(histArr, atm, spot, sym, fired) {
-    if (histArr.length < 2) return;
+  function computeStateChange(histArr, atm, spot, sym, fired) {
+    if (histArr.length < 4) return;
     var latest = histArr[histArr.length-1].chain;
+    var past3  = histArr[histArr.length-4].chain;
+    var past10 = histArr.length>=11 ? histArr[histArr.length-11].chain : null;
+    var open   = histArr[0].chain;
+    function toMap(ch){var m={};ch.forEach(function(r){m[r.strike]=r;});return m;}
+    var p3Map=toMap(past3), p10Map=past10?toMap(past10):null, openMap=toMap(open);
 
-    // ── STRIKE-LEVEL ──────────────────────────────────────────────────────
-    // Watch: top 5 CE OI + top 5 PE OI + ATM ±2
-    var topCE = latest
-      .filter(function(r){return (r.ce_oi||0)>MIN_OI;})
-      .sort(function(a,b){return b.ce_oi-a.ce_oi;})
-      .slice(0,5)
-      .map(function(r){return r.strike;});
+    var topCE=latest.filter(function(r){return (r.ce_oi||0)>MIN_OI;}).sort(function(a,b){return b.ce_oi-a.ce_oi;}).slice(0,5);
+    var topPE=latest.filter(function(r){return (r.pe_oi||0)>MIN_OI;}).sort(function(a,b){return b.pe_oi-a.pe_oi;}).slice(0,5);
+    var atmRows=latest.filter(function(r){return Math.abs(r.strike-atm)<=((sym==='BANKNIFTY'?100:50)*2);});
+    var watchMap={};
+    topCE.forEach(function(r){watchMap[r.strike]=watchMap[r.strike]||{};watchMap[r.strike].ce=true;});
+    topPE.forEach(function(r){watchMap[r.strike]=watchMap[r.strike]||{};watchMap[r.strike].pe=true;});
+    atmRows.forEach(function(r){watchMap[r.strike]=watchMap[r.strike]||{};watchMap[r.strike].ce=true;watchMap[r.strike].pe=true;});
 
-    var topPE = latest
-      .filter(function(r){return (r.pe_oi||0)>MIN_OI;})
-      .sort(function(a,b){return b.pe_oi-a.pe_oi;})
-      .slice(0,5)
-      .map(function(r){return r.strike;});
+    Object.keys(watchMap).forEach(function(sk) {
+      var strike=parseInt(sk);
+      var now=latest.find(function(r){return r.strike===strike;});
+      if (!now) return;
 
-    var atmSteps  = latest.filter(function(r){return Math.abs(r.strike-atm)<=(atm*0.005);}).map(function(r){return r.strike;});
-    var watchSet  = {};
-    topCE.forEach(function(s){watchSet[s]='ce';});
-    topPE.forEach(function(s){watchSet[s]=watchSet[s]?'both':'pe';});
-    atmSteps.forEach(function(s){watchSet[s]=watchSet[s]||'both';});
+      ['ce','pe'].forEach(function(side) {
+        if (!watchMap[sk][side]) return;
+        var nowOI=side==='ce'?(now.ce_oi||0):(now.pe_oi||0);
+        if (nowOI<MIN_OI) return;
+        var nowCOI=side==='ce'?(now.ce_chg_oi||0):(now.pe_chg_oi||0);
+        var p3r=p3Map[strike], p10r=p10Map?p10Map[strike]:null, openR=openMap[strike];
+        var d3  =p3r  ?nowCOI-(side==='ce'?(p3r.ce_chg_oi||0):(p3r.pe_chg_oi||0)):0;
+        var d10 =p10r ?nowCOI-(side==='ce'?(p10r.ce_chg_oi||0):(p10r.pe_chg_oi||0)):0;
+        var dOpen=openR?nowCOI-(side==='ce'?(openR.ce_chg_oi||0):(openR.pe_chg_oi||0)):0;
+        var primaryDelta=p10r?d10:d3;
+        var floor=Math.max(50000,nowOI*0.02);
+        var stk=sym+'|'+strike+'|'+side;
 
-    TFS.forEach(function(tf) {
-      if (histArr.length < tf.snaps+1) return;
-      var past    = histArr[histArr.length-1-tf.snaps].chain;
-      var pastMap = {};
-      past.forEach(function(r){pastMap[r.strike]=r;});
-      var openSnap = histArr[0].chain;
-      var openMap  = {};
-      openSnap.forEach(function(r){openMap[r.strike]=r;});
+        if (Math.abs(primaryDelta)<floor) {
+          if (stateRef.current[stk]&&stateRef.current[stk].state!=='neutral')
+            stateRef.current[stk]={state:'neutral',pct:0,ts:Date.now()};
+          return;
+        }
 
-      Object.keys(watchSet).forEach(function(strikeStr) {
-        var strike = parseInt(strikeStr);
-        var now    = latest.find(function(r){return r.strike===strike;});
-        var prev   = pastMap[strike];
-        var open   = openMap[strike];
-        if (!now || !prev) return;
+        var dk=stk;
+        addDist(dk,primaryDelta);
+        var dist=distRef.current[dk];
+        var pct=pctRank(dist,primaryDelta);
+        if (pct<ALERT_PCT) return;
 
-        ['ce','pe'].forEach(function(side) {
-          if (watchSet[strikeStr] !== side && watchSet[strikeStr] !== 'both') return;
-          var nowOI  = side==='ce'?(now.ce_oi||0):(now.pe_oi||0);
-          if (nowOI < MIN_OI) return;
+        var newState=primaryDelta>0?'writing':'unwind';
+        var prevSt=stateRef.current[dk]||{state:'neutral',pct:0,ts:0};
+        var stateChanged=prevSt.state!==newState;
+        var escalated=!stateChanged&&pct>=prevSt.pct+8&&pct>=HIGH_PCT;
+        if (!stateChanged&&!escalated) return;
+        stateRef.current[dk]={state:newState,pct:pct,ts:Date.now()};
 
-          var nowCOI  = side==='ce'?(now.ce_chg_oi||0):(now.pe_chg_oi||0);
-          var prevCOI = side==='ce'?(prev.ce_chg_oi||0):(prev.pe_chg_oi||0);
-          var openCOI = open ? (side==='ce'?(open.ce_chg_oi||0):(open.pe_chg_oi||0)) : 0;
-          var delta   = nowCOI - prevCOI;
-          var fromOpen = nowCOI - openCOI;
+        var isCE=side==='ce', isUnwind=newState==='unwind';
+        var oiRank=getOIRank(latest,strike,side);
+        var rankTag=oiRank<=3?'#'+oiRank+(isCE?' Resistance':' Support'):strike===atm?'ATM':'';
+        var emoji,type,desc;
+        if (isCE&&isUnwind)  {emoji='🟢';type='CE UNWIND — '+strike;  desc='Call writers covering at '+strike+(rankTag?' ('+rankTag+')':'')+'. Resistance crumbling — watch for breakout above.';}
+        else if (isCE)       {emoji='🔴';type='CE WRITING — '+strike;  desc='Fresh call writing at '+strike+(rankTag?' ('+rankTag+')':'')+'. Resistance strengthening — upside capped here.';}
+        else if (isUnwind)   {emoji='🔴';type='PE UNWIND — '+strike;   desc='Put writers covering at '+strike+(rankTag?' ('+rankTag+')':'')+'. Support crumbling — watch for breakdown below.';}
+        else                 {emoji='🟢';type='PE WRITING — '+strike;  desc='Fresh put writing at '+strike+(rankTag?' ('+rankTag+')':'')+'. Support strengthening — dips defended here.';}
 
-          var distKey = sym+'|strike|'+strike+'|'+side+'|'+tf.snaps;
-          addDist(distKey, delta);
-          var dist = distRef.current[distKey];
-          if (!dist || dist.length < MIN_SAMPLES) return;
-
-          var pct = pctRank(dist, delta);
-          if (pct < ALERT_PCT) return;
-
-          var isUnwind = delta < 0;
-          var dir      = isUnwind ? 'unwind' : 'build';
-          var oiRank   = getOIRank(latest, strike, side);
-          var tfc      = tfCount(sym, strike, side, dir);
-          var score    = conviction(pct, oiRank, tf.snaps, tfc, isUnwind);
-
-          var cdKey = sym+'|'+strike+'|'+side+'|'+dir+'|'+tf.label;
-          var prevPct = (cooldownRef.current[cdKey+'_pct'] || 0);
-          if (!canFire(cdKey, tf.cooldownMs, pct, prevPct)) return;
-
-          cooldownRef.current[cdKey]        = Date.now();
-          cooldownRef.current[cdKey+'_pct'] = pct;
-
-          var isCE     = side==='ce';
-          var distAbs  = Math.abs(strike - atm);
-          var tag      = strike===atm?'ATM':strike>atm?'#'+getOIRank(latest,strike,'ce')+' Resistance':'#'+getOIRank(latest,strike,'pe')+' Support';
-          var emoji    = isUnwind ? (isCE?'🟢':'🔴') : (isCE?'🔴':'🟢');
-          var typeLbl  = (isUnwind ? (isCE?'CE UNWIND':'PE UNWIND') : (isCE?'CE BUILDUP':'PE BUILDUP')) + ' — ' + strike;
-
-          var whatDesc = isUnwind
-            ? (isCE
-              ? 'Call writers covering at '+strike+' ('+tag+'). Resistance crumbling. Watch for price to break above.'
-              : 'Put writers covering at '+strike+' ('+tag+'). Support crumbling. Watch for price to break below.')
-            : (isCE
-              ? 'Fresh call writing at '+strike+' ('+tag+'). Resistance strengthening. Upside capped here.'
-              : 'Fresh put writing at '+strike+' ('+tag+'). Support strengthening. Dips to this level are defended.');
-
-          var escNote = tfc >= 2 ? ' | '+tfc+' timeframes confirmed' : '';
-
-          fired.push({
-            id:       Date.now()+Math.random(),
-            ts:       Date.now(),
-            time:     nowStr(),
-            symbol:   sym,
-            strike:   strike,
-            side:     side,
-            dir:      dir,
-            type:     typeLbl,
-            emoji:    emoji,
-            desc:     whatDesc,
-            oi:       fmt(nowOI),
-            delta:    fmt(delta),
-            fromOpen: fmt(fromOpen),
-            pct:      pct,
-            tf:       tf.label,
-            tfSnaps:  tf.snaps,
-            tfCount:  tfc,
-            score:    score,
-            oiRank:   oiRank,
-            tag:      tag,
-            level:    'STRIKE',
-            cdKey:    cdKey,
-            escNote:  escNote,
-            samples:  dist.length,
-          });
-        });
-      });
-    });
-
-    // ── ZONE-LEVEL ────────────────────────────────────────────────────────
-    var zones = [
-      { key:'deep_ce', name:'Deep OTM CE', minP:0.02, maxP:0.06, dir: 1, side:'ce' },
-      { key:'otm_ce',  name:'OTM CE',      minP:0.005,maxP:0.02, dir: 1, side:'ce' },
-      { key:'otm_pe',  name:'OTM PE',      minP:0.005,maxP:0.02, dir:-1, side:'pe' },
-      { key:'deep_pe', name:'Deep OTM PE', minP:0.02, maxP:0.06, dir:-1, side:'pe' },
-    ];
-
-    TFS.forEach(function(tf) {
-      if (histArr.length < tf.snaps+1) return;
-      var past    = histArr[histArr.length-1-tf.snaps].chain;
-
-      zones.forEach(function(z) {
-        var nowV  = zoneCOI(latest, atm, spot, z.minP, z.maxP, z.dir, z.side);
-        var pastV = zoneCOI(past,   atm, spot, z.minP, z.maxP, z.dir, z.side);
-        var delta = nowV - pastV;
-
-        var distKey = sym+'|zone|'+z.key+'|'+tf.snaps;
-        addDist(distKey, delta);
-        var dist = distRef.current[distKey];
-        if (!dist || dist.length < MIN_SAMPLES) return;
-
-        var pct = pctRank(dist, delta);
-        if (pct < ALERT_PCT) return;
-
-        var isUnwind = delta < 0;
-        var dir      = isUnwind ? 'unwind' : 'build';
-        var isCE     = z.side==='ce';
-        var isDeep   = z.key.indexOf('deep')===0;
-        var score    = conviction(pct, 4, tf.snaps, 0, isUnwind);
-
-        var cdKey = sym+'|zone|'+z.key+'|'+dir+'|'+tf.label;
-        var prevPct = (cooldownRef.current[cdKey+'_pct'] || 0);
-        if (!canFire(cdKey, tf.cooldownMs, pct, prevPct)) return;
-
-        cooldownRef.current[cdKey]        = Date.now();
-        cooldownRef.current[cdKey+'_pct'] = pct;
-
-        var emoji, typeLbl, desc;
-        if (isCE && !isUnwind && isDeep) { emoji='🟣'; typeLbl='DEEP OTM SPEC CALLS';  desc='Speculative call buying surge >2% above ATM — big move bet. Watch for 30min confirmation.'; }
-        else if (isCE && !isUnwind)      { emoji='🔴'; typeLbl='RESISTANCE BUILDING';   desc='OTM call writing surge — institutions constructing ceiling across multiple strikes.'; }
-        else if (isCE && isUnwind)       { emoji='🟢'; typeLbl='RESISTANCE CRUMBLING';  desc='OTM call writers covering en masse — ceiling collapsing, breakout signal.'; }
-        else if (!isCE && isUnwind && isDeep) { emoji='🟣'; typeLbl='DEEP OTM SPEC PUTS'; desc='Speculative put buying surge >2% below ATM — big move bet. Watch for 30min confirmation.'; }
-        else if (!isCE && !isUnwind)     { emoji='🟢'; typeLbl='SUPPORT BUILDING';      desc='OTM put writing surge — institutions constructing floor across multiple strikes.'; }
-        else                             { emoji='🔴'; typeLbl='SUPPORT CRUMBLING';     desc='OTM put writers covering en masse — floor collapsing, breakdown signal.'; }
-
+        var note=escalated?' [ESCALATION]':stateChanged&&prevSt.state!=='neutral'?' [REVERSAL from '+(prevSt.state==='writing'?'WRITING':'UNWIND')+']':'';
         fired.push({
-          id:      Date.now()+Math.random(),
-          ts:      Date.now(),
-          time:    nowStr(),
-          symbol:  sym,
-          strike:  null,
-          side:    z.side,
-          dir:     dir,
-          type:    typeLbl,
-          emoji:   emoji,
-          desc:    desc,
-          delta:   fmt(delta),
-          pct:     pct,
-          tf:      tf.label,
-          tfSnaps: tf.snaps,
-          tfCount: 0,
-          score:   score,
-          oiRank:  99,
-          tag:     z.name,
-          level:   'ZONE',
-          cdKey:   cdKey,
-          samples: dist.length,
+          id:Date.now()+Math.random(), ts:Date.now(), time:nowStr(), symbol:sym,
+          strike:strike, side:side, dir:newState, type:type, emoji:emoji,
+          desc:desc+note, oi:nowOI, delta:fmt(primaryDelta), fromOpen:fmt(dOpen),
+          pct:pct, score:pct, oiRank:oiRank, tag:rankTag,
+          level:stateChanged?(prevSt.state!=='neutral'?'REVERSAL':'NEW'):'ESCALATION',
+          samples:dist?dist.length:0,
         });
       });
     });
   }
 
-  // ── Multi-timeframe mega alert ────────────────────────────────────────────
-  function checkMegaAlerts(newFired, existingAlerts, fired) {
-    // Group by sym|strike|side|dir — if 3+ timeframes in last 2hr → mega alert
-    var groups = {};
-    var allAlerts = existingAlerts.concat(newFired);
-    var cutoff = Date.now() - 2*60*60*1000;
-    allAlerts.filter(function(a){return a.ts>cutoff&&a.strike;}).forEach(function(a){
-      var k = a.symbol+'|'+a.strike+'|'+a.side+'|'+a.dir;
-      if (!groups[k]) groups[k] = [];
-      groups[k].push(a);
-    });
-    Object.keys(groups).forEach(function(k) {
-      var g = groups[k];
-      var tfs = {};
-      g.forEach(function(a){tfs[a.tf]=true;});
-      var count = Object.keys(tfs).length;
-      if (count < 3) return;
-      // Check not already fired mega for this group recently
-      var megaKey = 'MEGA|'+k;
-      if (cooldownRef.current[megaKey] && Date.now()-cooldownRef.current[megaKey] < 30*60*1000) return;
-      cooldownRef.current[megaKey] = Date.now();
-      var rep = g[0];
-      fired.push({
-        id: Date.now()+Math.random(), ts: Date.now(), time: nowStr(),
-        symbol: rep.symbol, strike: rep.strike, side: rep.side, dir: rep.dir,
-        type: '⚡ ALL TF ALIGNED — '+rep.type,
-        emoji: '⚡', desc: count+' timeframes confirming '+rep.type+'. Highest conviction signal. '+rep.desc,
-        delta: rep.delta, pct: 99, tf: count+'× TF', tfSnaps: 40, tfCount: count,
-        score: 10, oiRank: rep.oiRank, tag: rep.tag, level: 'MEGA', cdKey: megaKey,
-        samples: rep.samples||0,
-      });
-    });
-  }
-
-  // ── Effect: update history + run alerts ───────────────────────────────────
   React.useEffect(function() {
-    if (chain.length)   { chainHistRef.current.push({chain:chain,ts:Date.now()});   if(chainHistRef.current.length>42)   chainHistRef.current.shift(); }
-    if (chainBN.length) { chainHistBNRef.current.push({chain:chainBN,ts:Date.now()});if(chainHistBNRef.current.length>42) chainHistBNRef.current.shift(); }
-
-    var fired = [];
-    computeAlerts(chainHistRef.current,   atmNifty, spotNifty, 'NIFTY',     fired);
-    computeAlerts(chainHistBNRef.current, atmBN,    spotBN,    'BANKNIFTY', fired);
-    checkMegaAlerts(fired, alerts, fired);
-
+    if (chain.length)   {chainHistRef.current.push({chain:chain,ts:Date.now()});   if(chainHistRef.current.length>42) chainHistRef.current.shift();}
+    if (chainBN.length) {chainHistBNRef.current.push({chain:chainBN,ts:Date.now()});if(chainHistBNRef.current.length>42) chainHistBNRef.current.shift();}
+    var fired=[];
+    computeStateChange(chainHistRef.current,   atmNifty, spotNifty, 'NIFTY',     fired);
+    computeStateChange(chainHistBNRef.current, atmBN,    spotBN,    'BANKNIFTY', fired);
     if (fired.length) {
-      onAlerts && onAlerts(fired);
-      // Show highest score as toast
-      var best = fired.reduce(function(a,b){return b.score>a.score?b:a;}, fired[0]);
+      onAlerts&&onAlerts(fired);
+      var best=fired.reduce(function(a,b){return b.pct>a.pct?b:a;},fired[0]);
       setToast(best);
-      var t = setTimeout(function(){setToast(null);}, 10000);
+      var t=setTimeout(function(){setToast(null);},10000);
       return function(){clearTimeout(t);};
     }
   }, [chain, chainBN]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Derived data for UI ───────────────────────────────────────────────────
-  var visAlerts = symFilter==='ALL' ? alerts : alerts.filter(function(a){return a.symbol===symFilter;});
-
-  // Active levels for header strip
-  var activeMap = {};
-  visAlerts.forEach(function(a) {
-    if (!a.strike) return;
-    var k = a.symbol+'|'+a.strike+'|'+a.side;
-    if (!activeMap[k] || a.score > activeMap[k].score) activeMap[k] = a;
-  });
-  var activeLevels = Object.values(activeMap).sort(function(a,b){return b.score-a.score;}).slice(0,6);
-
-  // Strike view groups
-  var strikGroups = {};
-  visAlerts.forEach(function(a) {
-    var k = a.strike ? (a.symbol+'|'+a.strike+'|'+a.side) : ('zone|'+a.type);
-    if (!strikGroups[k]) strikGroups[k] = { key:k, strike:a.strike, side:a.side, symbol:a.symbol, tag:a.tag, alerts:[], maxScore:0 };
-    strikGroups[k].alerts.push(a);
-    if (a.score > strikGroups[k].maxScore) strikGroups[k].maxScore = a.score;
-  });
-  var groupList = Object.values(strikGroups).sort(function(a,b){return b.maxScore-a.maxScore;});
-
-  // ── Render helpers ────────────────────────────────────────────────────────
-  function Badge(p) {
-    return React.createElement('span',{style:{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:3,background:p.bg,color:p.col,border:p.border||'none'}},p.label);
+  function confCol(pct) { return pct>=HIGH_PCT?'#4ade80':pct>=ALERT_PCT?'#f59e0b':'#64748b'; }
+  function confBar(pct) {
+    var s=Math.max(0,Math.min(10,Math.round((pct-ALERT_PCT)/(100-ALERT_PCT)*10)));
+    var col=confCol(pct), b='';
+    for(var i=0;i<10;i++) b+=i<s?'█':'░';
+    return {bars:b,col:col};
+  }
+  function borderCol(a) {
+    return a.side==='ce'?(a.dir==='unwind'?'#4ade80':'#f87171'):(a.dir==='unwind'?'#f87171':'#4ade80');
   }
 
   function AlertCard(p) {
-    var a   = p.alert;
-    var cb  = convBar(a.score);
-    var sc  = strikeColor(a.symbol+'|'+a.strike+'|'+a.side);
-    var lvlCol = a.level==='MEGA'?'#f59e0b':a.level==='ZONE'?'#94a3b8':'#60a5fa';
-    return React.createElement('div',{
-      style:{marginBottom:8,padding:'10px 14px',background:'#1e293b',
-             borderRadius:8,borderLeft:'3px solid '+sc,border:'1px solid #334155',borderLeftWidth:3,borderLeftColor:sc}
-    },
-      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}},
-        React.createElement('div',{style:{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap',flex:1}},
-          React.createElement('span',{style:{fontSize:13}},a.emoji),
-          React.createElement('span',{style:{fontSize:11,fontWeight:800,color:cb.col}},a.type),
-          React.createElement(Badge,{label:a.tf,bg:'#0f172a',col:'#64748b',border:'1px solid #334155'}),
-          React.createElement(Badge,{label:a.level,bg:lvlCol+'18',col:lvlCol}),
-          a.level==='MEGA' && React.createElement(Badge,{label:'★ MAX',bg:'#f59e0b22',col:'#f59e0b'})
-        ),
-        React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center',flexShrink:0,marginLeft:8}},
-          React.createElement('span',{style:{fontSize:9,color:'#60a5fa',fontWeight:600}},a.symbol),
-          React.createElement('span',{style:{fontSize:9,color:'#475569'}},a.time)
-        )
-      ),
-      React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:4}},
-        React.createElement('span',{style:{fontFamily:'monospace',fontSize:10,color:cb.col,letterSpacing:1}},cb.bars),
-        React.createElement('span',{style:{fontSize:10,fontWeight:800,color:cb.col}},a.score+'/10')
-      ),
-      React.createElement('p',{style:{fontSize:10,color:'#94a3b8',margin:'0 0 4px',lineHeight:1.5}},a.desc),
-      React.createElement('div',{style:{display:'flex',gap:10,flexWrap:'wrap'}},
-        React.createElement('span',{style:{fontSize:9,color:'#475569'}}, 'Δ '+a.delta),
-        a.fromOpen && React.createElement('span',{style:{fontSize:9,color:'#475569'}}, 'from open: '+a.fromOpen),
-        React.createElement('span',{style:{fontSize:9,color:'#475569'}}, a.pct+'th pct'),
-        React.createElement('span',{style:{fontSize:9,color:'#475569'}}, a.samples+' samples'),
-        a.escNote && React.createElement('span',{style:{fontSize:9,color:'#a78bfa'}}, a.escNote)
-      )
+    var a=p.a, cb=confBar(a.pct||0), bc=borderCol(a);
+    var lvlCol=a.level==='REVERSAL'?'#a78bfa':a.level==='ESCALATION'?'#f59e0b':'#60a5fa';
+    return (
+      <div style={{marginBottom:8,padding:'10px 14px',background:'#1e293b',borderRadius:8,border:'1px solid #334155',borderLeft:'3px solid '+bc}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
+          <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+            <span style={{fontSize:13}}>{a.emoji}</span>
+            <span style={{fontSize:12,fontWeight:800,color:bc}}>{a.type}</span>
+            {a.level&&<span style={{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:3,background:lvlCol+'22',color:lvlCol}}>{a.level}</span>}
+          </div>
+          <div style={{display:'flex',gap:5,alignItems:'center',flexShrink:0}}>
+            <span style={{fontSize:9,color:'#60a5fa',fontWeight:600}}>{a.symbol}</span>
+            <span style={{fontSize:9,color:'#475569'}}>{a.time}</span>
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+          <span style={{fontFamily:'monospace',fontSize:11,color:cb.col,letterSpacing:1}}>{cb.bars}</span>
+          <span style={{fontSize:12,fontWeight:800,color:cb.col}}>{a.pct}% confidence</span>
+        </div>
+        <p style={{fontSize:10,color:'#94a3b8',margin:'0 0 4px',lineHeight:1.5}}>{a.desc}</p>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:9,color:'#475569'}}>COI Δ {a.delta}</span>
+          {a.fromOpen&&<span style={{fontSize:9,color:'#475569'}}>from open: {a.fromOpen}</span>}
+          <span style={{fontSize:9,color:'#475569'}}>{a.samples} samples</span>
+          {a.oiRank<=5&&<span style={{fontSize:9,color:'#f59e0b'}}>#{a.oiRank} OI strike</span>}
+        </div>
+      </div>
     );
   }
 
-  // ── Alert button ──────────────────────────────────────────────────────────
-  var megaCount = alerts.filter(function(a){return a.level==='MEGA';}).length;
-  var alertBtn = React.createElement('button',{
-    onClick:function(){setOpen(true);},
-    style:{background:'#1e293b',border:'1px solid '+(alerts.length?'#f59e0b':'#334155'),
-           borderRadius:8,padding:'6px 14px',color:alerts.length?'#f59e0b':'#64748b',
-           fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}
-  },
-    '🔔 Alerts',
-    alerts.length > 0 && React.createElement('span',{
-      style:{background:megaCount?'#f59e0b':'#f59e0b',color:'#0f172a',borderRadius:10,padding:'1px 6px',fontSize:10,fontWeight:800}
-    }, alerts.length)
+  // Strike View groups
+  var strikeGroups={};
+  alerts.forEach(function(a) {
+    if(!a.strike) return;
+    var k=a.symbol+'|'+a.strike+'|'+a.side;
+    if(!strikeGroups[k]) strikeGroups[k]={key:k,symbol:a.symbol,strike:a.strike,side:a.side,tag:a.tag,alerts:[],lastPct:0};
+    strikeGroups[k].alerts.push(a);
+    if((a.pct||0)>strikeGroups[k].lastPct) strikeGroups[k].lastPct=a.pct||0;
+  });
+  var groupList=Object.values(strikeGroups).sort(function(a,b){return b.lastPct-a.lastPct;});
+
+  var alertBtn = (
+    <button onClick={function(){setOpen(true);}}
+      style={{background:'#1e293b',border:'1px solid '+(alerts.length?'#f59e0b':'#334155'),
+              borderRadius:8,padding:'6px 14px',color:alerts.length?'#f59e0b':'#64748b',
+              fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
+      🔔 Alerts
+      {alerts.length>0&&<span style={{background:'#f59e0b',color:'#0f172a',borderRadius:10,padding:'1px 6px',fontSize:10,fontWeight:800}}>{alerts.length}</span>}
+    </button>
   );
 
-  return React.createElement(React.Fragment, null,
-    // ── Toast ───────────────────────────────────────────────────────────────
-    toast && React.createElement('div',{
-      onClick:function(){setOpen(true);setToast(null);},
-      style:{position:'fixed',top:80,right:20,zIndex:2000,cursor:'pointer',maxWidth:400,
-             background:'#1e293b',border:'1px solid #334155',borderLeft:'3px solid '+convBar(toast.score).col,
-             borderRadius:10,padding:'12px 16px',boxShadow:'0 8px 32px rgba(0,0,0,0.7)'}
-    },
-      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',gap:10}},
-        React.createElement('div',{style:{flex:1}},
-          React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}},
-            React.createElement('span',{style:{fontSize:13}},toast.emoji),
-            React.createElement('span',{style:{fontSize:12,fontWeight:800,color:convBar(toast.score).col}},toast.type),
-            React.createElement('span',{style:{fontFamily:'monospace',fontSize:10,color:convBar(toast.score).col}},convBar(toast.score).bars),
-            React.createElement('span',{style:{fontSize:10,fontWeight:800,color:convBar(toast.score).col}},toast.score+'/10')
-          ),
-          React.createElement('div',{style:{display:'flex',gap:8,marginBottom:4}},
-            React.createElement('span',{style:{fontSize:10,color:'#60a5fa',fontWeight:600}},toast.symbol),
-            React.createElement('span',{style:{fontSize:10,color:'#475569'}},' · '+toast.time+' · 🕐 '+toast.tf)
-          ),
-          React.createElement('p',{style:{fontSize:11,color:'#94a3b8',margin:'0 0 4px',lineHeight:1.4}},toast.desc),
-          React.createElement('div',{style:{display:'flex',gap:8}},
-            React.createElement('span',{style:{fontSize:9,color:'#475569'}},'Δ '+toast.delta),
-            React.createElement('span',{style:{fontSize:9,color:'#475569'}},toast.pct+'th pct · '+toast.samples+' samples')
-          )
-        ),
-        React.createElement('button',{
-          onClick:function(e){e.stopPropagation();setToast(null);},
-          style:{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:14,padding:0,flexShrink:0}
-        },'✕')
-      )
-    ),
+  return (
+    <>
+      {/* Toast */}
+      {toast&&(
+        <div onClick={function(){setOpen(true);setToast(null);}}
+          style={{position:'fixed',top:80,right:20,zIndex:2000,cursor:'pointer',maxWidth:400,
+                  background:'#1e293b',border:'1px solid #334155',borderLeft:'3px solid '+borderCol(toast),
+                  borderRadius:10,padding:'12px 16px',boxShadow:'0 8px 32px rgba(0,0,0,0.7)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',gap:10}}>
+            <div style={{flex:1}}>
+              <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+                <span style={{fontSize:13}}>{toast.emoji}</span>
+                <span style={{fontSize:12,fontWeight:800,color:borderCol(toast)}}>{toast.type}</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                <span style={{fontFamily:'monospace',fontSize:11,color:confBar(toast.pct).col}}>{confBar(toast.pct).bars}</span>
+                <span style={{fontSize:12,fontWeight:800,color:confBar(toast.pct).col}}>{toast.pct}% confidence</span>
+              </div>
+              <p style={{fontSize:11,color:'#94a3b8',margin:'0 0 4px',lineHeight:1.4}}>{toast.desc}</p>
+              <div style={{display:'flex',gap:8}}>
+                <span style={{fontSize:9,color:'#60a5fa',fontWeight:600}}>{toast.symbol}</span>
+                <span style={{fontSize:9,color:'#475569'}}>{toast.time}</span>
+                <span style={{fontSize:9,color:'#475569'}}>Δ {toast.delta}</span>
+              </div>
+            </div>
+            <button onClick={function(e){e.stopPropagation();setToast(null);}}
+              style={{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:14,padding:0,flexShrink:0}}>✕</button>
+          </div>
+        </div>
+      )}
 
-    // ── Drawer ──────────────────────────────────────────────────────────────
-    open && React.createElement('div',{
-      style:{position:'fixed',top:0,right:0,bottom:0,width:500,zIndex:1500,
-             background:'#0a1628',borderLeft:'1px solid #334155',
-             display:'flex',flexDirection:'column',boxShadow:'-8px 0 40px rgba(0,0,0,0.7)'}
-    },
-      // Header
-      React.createElement('div',{style:{padding:'14px 20px',borderBottom:'1px solid #1e293b'}},
-        React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}},
-          React.createElement('div',null,
-            React.createElement('p',{style:{fontSize:14,fontWeight:700,color:'#f1f5f9',margin:0}},'🔔 Alert Log'),
-            React.createElement('p',{style:{fontSize:10,color:'#475569',margin:'2px 0 0'}},
-              visAlerts.length+' alerts · percentile-based · 9m/15m/30m/1hr/2hr'
-            )
-          ),
-          React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center'}},
-            // Symbol filter
-            ['ALL','NIFTY','BANKNIFTY'].map(function(s) {
-              return React.createElement('button',{key:s,onClick:function(){setSymFilter(s);},
-                style:{padding:'3px 8px',borderRadius:4,fontSize:10,fontWeight:600,cursor:'pointer',
-                       background:symFilter===s?'#8b5cf6':'#1e293b',color:symFilter===s?'#fff':'#64748b',
-                       border:'1px solid '+(symFilter===s?'#8b5cf6':'#334155')}
-              },s);
-            }),
-            React.createElement('button',{onClick:function(){setOpen(false);},
-              style:{background:'#1e293b',border:'1px solid #334155',borderRadius:8,
-                     padding:'5px 10px',color:'#94a3b8',cursor:'pointer',fontSize:11}
-            },'✕')
-          )
-        ),
+      {/* Drawer */}
+      {open&&(
+        <div style={{position:'fixed',top:0,right:0,bottom:0,width:500,zIndex:1500,
+                     background:'#0a1628',borderLeft:'1px solid #334155',
+                     display:'flex',flexDirection:'column',boxShadow:'-8px 0 40px rgba(0,0,0,0.7)'}}>
+          {/* Header */}
+          <div style={{padding:'14px 20px',borderBottom:'1px solid #1e293b'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <div>
+                <p style={{fontSize:14,fontWeight:700,color:'#f1f5f9',margin:0}}>🔔 Alert Log</p>
+                <p style={{fontSize:10,color:'#475569',margin:'2px 0 0'}}>{alerts.length} alerts · state-change only · confidence = percentile rank</p>
+              </div>
+              <button onClick={function(){setOpen(false);}}
+                style={{background:'#1e293b',border:'1px solid #334155',borderRadius:8,padding:'5px 10px',color:'#94a3b8',cursor:'pointer',fontSize:11}}>✕</button>
+            </div>
 
-        // Active levels strip
-        activeLevels.length > 0 && React.createElement('div',{
-          style:{display:'flex',gap:6,flexWrap:'wrap'}
-        },
-          activeLevels.map(function(a,i) {
-            var cb = convBar(a.score);
-            var sc = strikeColor(a.symbol+'|'+a.strike+'|'+a.side);
-            return React.createElement('div',{key:i,
-              style:{display:'flex',alignItems:'center',gap:5,padding:'3px 8px',
-                     background:'#1e293b',borderRadius:6,border:'1px solid '+sc+'44'}
-            },
-              React.createElement('span',{style:{fontSize:9,color:sc,fontWeight:700}},a.symbol),
-              React.createElement('span',{style:{fontSize:9,color:'#94a3b8'}},a.strike),
-              React.createElement('span',{style:{fontSize:9,color:a.dir==='unwind'?'#4ade80':'#f87171'}},a.dir==='unwind'?'↓':'↑'),
-              React.createElement('span',{style:{fontFamily:'monospace',fontSize:8,color:cb.col}},a.score+'/10')
-            );
-          })
-        ),
+            {/* Symbol filter — only for monitor tab */}
+            {tab==='monitor'&&(
+              <div style={{display:'flex',gap:6,marginBottom:8}}>
+                {['NIFTY','BANKNIFTY'].map(function(s){
+                  return <button key={s} onClick={function(){setSymFilter(s);}}
+                    style={{padding:'3px 10px',borderRadius:4,fontSize:10,fontWeight:600,cursor:'pointer',
+                            background:symFilter===s?'#8b5cf6':'#1e293b',color:symFilter===s?'#fff':'#64748b',
+                            border:'1px solid '+(symFilter===s?'#8b5cf6':'#334155')}}>{s}</button>;
+                })}
+              </div>
+            )}
 
-        // Tab bar
-        React.createElement('div',{style:{display:'flex',gap:0,marginTop:10,borderRadius:8,overflow:'hidden',border:'1px solid #334155'}},
-          ['feed','strikes'].map(function(t) {
-            return React.createElement('button',{key:t,onClick:function(){setTab(t);},
-              style:{flex:1,padding:'6px',fontSize:11,fontWeight:600,cursor:'pointer',
-                     background:tab===t?'#1e293b':'transparent',
-                     color:tab===t?'#f1f5f9':'#475569',border:'none'}
-            }, t==='feed'?'📡 Live Feed':'📊 Strike View');
-          })
-        )
-      ),
+            {/* Tabs */}
+            <div style={{display:'flex',borderRadius:8,overflow:'hidden',border:'1px solid #334155'}}>
+              {[['feed','📡 Live Feed'],['strikes','📊 Strike View'],['monitor','📋 Strike Monitor']].map(function(t){
+                return <button key={t[0]} onClick={function(){setTab(t[0]);}}
+                  style={{flex:1,padding:'6px',fontSize:11,fontWeight:600,cursor:'pointer',border:'none',
+                          background:tab===t[0]?'#1e293b':'transparent',color:tab===t[0]?'#f1f5f9':'#475569'}}>{t[1]}</button>;
+              })}
+            </div>
+          </div>
 
-      // Content
-      React.createElement('div',{style:{flex:1,overflowY:'auto',padding:'10px 14px'}},
-        visAlerts.length === 0
-          ? React.createElement('p',{style:{color:'#475569',fontSize:12,textAlign:'center',marginTop:40}},
-              'No alerts yet · building distribution (need '+MIN_SAMPLES+' samples per channel)')
-
-          : tab === 'feed'
-            // LIVE FEED — newest first, color-coded by strike
-            ? React.createElement('div',null,
-                visAlerts.map(function(a) { return React.createElement(AlertCard,{key:a.id,alert:a}); })
-              )
-
-            // STRIKE VIEW — grouped by strike, sorted by score
-            : React.createElement('div',null,
-                groupList.map(function(g) {
-                  var sc = strikeColor(g.symbol+'|'+g.strike+'|'+g.side);
-                  var cb = convBar(g.maxScore);
-                  var latestDir = g.alerts[0].dir;
-                  return React.createElement('div',{key:g.key,style:{marginBottom:12,border:'1px solid #1e293b',borderRadius:10,overflow:'hidden'}},
-                    // Group header
-                    React.createElement('div',{
-                      style:{padding:'8px 14px',background:'#1e293b',display:'flex',justifyContent:'space-between',alignItems:'center',
-                             borderLeft:'3px solid '+sc}
-                    },
-                      React.createElement('div',{style:{display:'flex',gap:8,alignItems:'center'}},
-                        React.createElement('span',{style:{fontSize:11,fontWeight:700,color:sc}},g.symbol+' '+g.strike),
-                        React.createElement('span',{style:{fontSize:10,color:'#64748b'}},g.tag||''),
-                        React.createElement('span',{style:{fontSize:11,color:latestDir==='unwind'?'#4ade80':'#f87171',fontWeight:700}},
-                          latestDir==='unwind'?'↓ UNWINDING':'↑ BUILDING')
-                      ),
-                      React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center'}},
-                        React.createElement('span',{style:{fontFamily:'monospace',fontSize:10,color:cb.col}},cb.bars),
-                        React.createElement('span',{style:{fontSize:10,fontWeight:800,color:cb.col}},g.maxScore+'/10'),
-                        React.createElement('span',{style:{fontSize:9,color:'#475569'}},g.alerts.length+'×')
-                      )
-                    ),
-                    // Timeline of alerts for this strike
-                    React.createElement('div',{style:{padding:'6px 10px',display:'flex',flexDirection:'column',gap:4}},
-                      g.alerts.map(function(a) {
-                        var acb = convBar(a.score);
-                        return React.createElement('div',{key:a.id,
-                          style:{display:'flex',gap:8,alignItems:'center',padding:'4px 8px',
-                                 background:a.level==='MEGA'?'rgba(245,158,11,0.08)':'transparent',
-                                 borderRadius:4,borderLeft:'2px solid '+(a.dir==='unwind'?'#4ade80':'#f87171')}
-                        },
-                          React.createElement('span',{style:{fontSize:10,color:'#475569',minWidth:36}},a.time),
-                          React.createElement('span',{style:{fontSize:9,fontWeight:700,minWidth:28,color:'#64748b'}},a.tf),
-                          React.createElement('span',{style:{fontFamily:'monospace',fontSize:9,color:acb.col}},a.score+'/10'),
-                          React.createElement('span',{style:{fontSize:9,color:a.dir==='unwind'?'#4ade80':'#f87171',fontWeight:700}},
-                            a.dir==='unwind'?'↓':'↑'),
-                          React.createElement('span',{style:{fontSize:9,color:'#475569'}},'Δ '+a.delta),
-                          React.createElement('span',{style:{fontSize:9,color:'#64748b'}},a.pct+'th'),
-                          a.level==='MEGA' && React.createElement('span',{style:{fontSize:9,color:'#f59e0b',fontWeight:700}},'★')
-                        );
-                      })
-                    )
+          {/* Content */}
+          <div style={{flex:1,overflowY:'auto',padding:tab==='monitor'?0:'10px 14px'}}>
+            {tab==='monitor' ? (
+              <StrikeMonitor
+                chain={symFilter==='BANKNIFTY'?(chainBN):(chain)}
+                atm={symFilter==='BANKNIFTY'?(atmBN):(atmNifty)}
+                spot={symFilter==='BANKNIFTY'?(spotBN):(spotNifty)}
+                symbol={symFilter}
+                alerts={alerts}
+                inline={true}
+              />
+            ) : alerts.length===0 ? (
+              <p style={{color:'#475569',fontSize:12,textAlign:'center',marginTop:40}}>No alerts yet · watching for state changes at key strikes</p>
+            ) : tab==='feed' ? (
+              <div>{alerts.map(function(a){return <AlertCard key={a.id} a={a}/>;})}</div>
+            ) : (
+              <div>
+                {groupList.map(function(g){
+                  var isCE=g.side==='ce', lastAlert=g.alerts[0], isUnwind=lastAlert&&lastAlert.dir==='unwind';
+                  var bc=isCE?(isUnwind?'#4ade80':'#f87171'):(isUnwind?'#f87171':'#4ade80');
+                  var cb=confBar(g.lastPct);
+                  return (
+                    <div key={g.key} style={{marginBottom:12,border:'1px solid #1e293b',borderRadius:10,overflow:'hidden'}}>
+                      <div style={{padding:'8px 14px',background:'#1e293b',borderLeft:'3px solid '+bc,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <span style={{fontSize:12,fontWeight:700,color:bc}}>{g.side.toUpperCase()} — {g.strike}</span>
+                          <span style={{fontSize:10,color:'#64748b'}}>{g.symbol} {g.tag}</span>
+                          <span style={{fontSize:11,fontWeight:700,color:isUnwind?'#f87171':'#4ade80'}}>{isUnwind?'↓ UNWIND':'↑ WRITING'}</span>
+                        </div>
+                        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                          <span style={{fontFamily:'monospace',fontSize:9,color:cb.col}}>{cb.bars}</span>
+                          <span style={{fontSize:10,fontWeight:800,color:cb.col}}>{g.lastPct}%</span>
+                          <span style={{fontSize:9,color:'#475569'}}>{g.alerts.length}×</span>
+                        </div>
+                      </div>
+                      <div style={{padding:'6px 10px',display:'flex',flexDirection:'column',gap:3}}>
+                        {g.alerts.map(function(a){
+                          var acb=confBar(a.pct||0), aIsUnwind=a.dir==='unwind';
+                          return (
+                            <div key={a.id} style={{display:'flex',gap:8,alignItems:'center',padding:'4px 8px',borderRadius:4,borderLeft:'2px solid '+(aIsUnwind?'#f87171':'#4ade80')}}>
+                              <span style={{fontSize:10,color:'#475569',minWidth:36}}>{a.time}</span>
+                              <span style={{fontSize:9,fontWeight:700,color:acb.col,minWidth:36}}>{a.pct}%</span>
+                              <span style={{fontSize:9,fontWeight:700,color:aIsUnwind?'#f87171':'#4ade80'}}>{aIsUnwind?'↓':'↑'}</span>
+                              <span style={{fontSize:9,color:'#475569'}}>{a.delta}</span>
+                              {a.level&&<span style={{fontSize:8,color:'#a78bfa'}}>{a.level}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   );
-                })
-              )
-      ),
+                })}
+              </div>
+            )}
+          </div>
 
-      // Footer
-      React.createElement('div',{style:{padding:'10px 14px',borderTop:'1px solid #1e293b',display:'flex',gap:8}},
-        React.createElement('button',{
-          onClick:function() {
-            if (!visAlerts.length) return;
-            var csv = 'Time,Symbol,Level,TF,Alert,Score,Pct,Samples,Delta,FromOpen,Description\n' +
-              visAlerts.map(function(a){
-                return [a.time,a.symbol,a.level,a.tf,a.type,a.score,a.pct,a.samples||'',a.delta,a.fromOpen||'','"'+a.desc+'"'].join(',');
-              }).join('\n');
-            var blob = new Blob([csv],{type:'text/csv'});
-            var url  = URL.createObjectURL(blob);
-            var el   = document.createElement('a'); el.href=url; el.download='alerts_'+new Date().toISOString().slice(0,10)+'.csv'; el.click();
-          },
-          style:{flex:1,padding:'7px',background:'#1e293b',border:'1px solid #334155',
-                 borderRadius:8,color:'#94a3b8',cursor:'pointer',fontSize:11,fontWeight:600}
-        },'📥 Export'),
-        React.createElement('button',{
-          onClick:function(){onClear&&onClear();},
-          style:{flex:1,padding:'7px',background:'#1e293b',border:'1px solid #334155',
-                 borderRadius:8,color:'#f87171',cursor:'pointer',fontSize:11,fontWeight:600}
-        },'🗑 Clear All')
-      )
-    ),
+          {/* Footer */}
+          <div style={{padding:'10px 14px',borderTop:'1px solid #1e293b',display:'flex',gap:8}}>
+            <button onClick={function(){
+              if(!alerts.length) return;
+              var csv='Time,Symbol,Level,Strike,Side,Direction,Alert,Confidence%,OI_Rank,Delta,FromOpen,Samples,Description\n'+
+                alerts.map(function(a){return[a.time,a.symbol,a.level||'',a.strike||'',a.side||'',a.dir||'',a.type,a.pct||'',a.oiRank||'',a.delta,a.fromOpen||'',a.samples||'','"'+a.desc+'"'].join(',');}).join('\n');
+              var blob=new Blob([csv],{type:'text/csv'});
+              var url=URL.createObjectURL(blob);
+              var el=document.createElement('a');el.href=url;el.download='alerts_'+new Date().toISOString().slice(0,10)+'.csv';el.click();
+            }} style={{flex:1,padding:'7px',background:'#1e293b',border:'1px solid #334155',borderRadius:8,color:'#94a3b8',cursor:'pointer',fontSize:11,fontWeight:600}}>
+              📥 Export
+            </button>
+            <button onClick={function(){onClear&&onClear();}}
+              style={{flex:1,padding:'7px',background:'#1e293b',border:'1px solid #334155',borderRadius:8,color:'#f87171',cursor:'pointer',fontSize:11,fontWeight:600}}>
+              🗑 Clear All
+            </button>
+          </div>
+        </div>
+      )}
 
-    alertBtn
+      {alertBtn}
+    </>
   );
 }
 
@@ -3186,9 +3056,24 @@ export default function Options() {
   var [loading, setLoading]       = useState(false);
   var [lastUpdate, setLastUpdate] = useState(null);
   var [showPreTrade, setShowPreTrade] = useState(false);
-  var [alerts, setAlerts]             = useState([]);
+  var _alertKey = 'mt_alerts_' + new Date().toISOString().slice(0,10);
+  var [alerts, setAlerts] = useState(function() {
+    try {
+      var s = localStorage.getItem(_alertKey);
+      if (!s) return [];
+      var parsed = JSON.parse(s);
+      return parsed.filter(function(a) {
+        return a.pct && a.pct >= 82 && a.strike && a.side && a.dir;
+      });
+    } catch(e) { return []; }
+  });
 
   var intervalRef                 = useRef(null);
+
+  useEffect(function() {
+    try { localStorage.setItem(_alertKey, JSON.stringify(alerts.slice(0,200))); }
+    catch(e){}
+  }, [alerts]); // eslint-disable-line react-hooks/exhaustive-deps
   var overviewRef                 = useRef(null);
   var prevPCRRef                  = useRef({});
 
@@ -3302,8 +3187,11 @@ export default function Options() {
             spotNifty={data ? (data.spot_price || 0) : 0}
             spotBN={bnData ? (bnData.spot_price || 0) : 0}
             alerts={alerts}
-            onAlerts={function(fired) { setAlerts(function(prev) { return fired.concat(prev).slice(0, 200); }); }}
-            onClear={function() { setAlerts([]); }}
+            onAlerts={function(fired) { setAlerts(function(prev) { return fired.concat(prev).slice(0,200); }); }}
+            onClear={function() {
+              setAlerts([]);
+              try { localStorage.removeItem(_alertKey); } catch(e){}
+            }}
           />
           <button
             onClick={function() { navigate('/option-chain'); }}
@@ -3388,6 +3276,14 @@ export default function Options() {
             chain={data.chain || []}
             atm={data.atm_strike || 0}
             symbol={symbol}
+          />
+
+          <StrikeMonitor
+            chain={data.full_chain || data.chain || []}
+            atm={data.atm_strike || 0}
+            spot={data.spot_price || 0}
+            symbol={symbol}
+            alerts={alerts}
           />
 
           <FiveStrikeTable
