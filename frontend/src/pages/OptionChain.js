@@ -267,13 +267,26 @@ export default function OptionChain() {
       .catch(function(e) { console.error(e); setLoading(false); });
   }
 
+
+  function isMarketOpen() {
+    var now = new Date();
+    var ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    var day = ist.getUTCDay();
+    if (day === 0 || day === 6) return false;
+    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    return mins >= 555 && mins < 930;
+  }
+
   useEffect(function() {
     if (!hasOptions) return;
     setLoading(true);
     setData(null);
     fetchData(symbol);
     clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(function() { fetchData(symbol); }, 180000);
+    intervalRef.current = setInterval(function() {
+      if (!isMarketOpen()) { clearInterval(intervalRef.current); return; }
+      fetchData(symbol);
+    }, 180000);
     return function() { clearInterval(intervalRef.current); };
   }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -334,9 +347,9 @@ export default function OptionChain() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
                         background: '#1e293b', borderRadius: 6, border: '1px solid #334155' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
-                           background: loading ? '#f59e0b' : '#4ade80' }} />
+                           background: loading ? '#f59e0b' : isMarketOpen() ? '#4ade80' : '#f59e0b' }} />
             <span style={{ fontSize: 12, color: '#94a3b8' }}>
-              {loading ? 'Loading…' : lastUpdate ? 'Updated ' + lastUpdate : 'Waiting'}
+              {loading ? 'Loading…' : !isMarketOpen() ? 'Market closed · paused' : lastUpdate ? 'Updated ' + lastUpdate : 'Waiting'}
             </span>
           </div>
           <button

@@ -780,7 +780,7 @@ function IVDashboard(props) {
       {/* IV Chart */}
       <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>IV trend — {symbol} ATM strike</p>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>IV trend — {symbol} ATM · full day 9:15–3:30 · {history.length} readings</p>
           <div style={{ display: 'flex', gap: 12, fontSize: 11 }}>
             <span style={{ color: '#f87171' }}>■ CE IV</span>
             <span style={{ color: '#4ade80' }}>■ PE IV</span>
@@ -3119,18 +3119,50 @@ export default function Options() {
     return function() { clearInterval(overviewRef.current); };
   }, [hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  function istMins() {
+    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    return ist.getUTCDay() * 10000 + ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  }
+  function isMarketOpen() {
+    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    var day = ist.getUTCDay();
+    if (day === 0 || day === 6) return false;
+    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    return mins >= 555 && mins < 930; // 9:15 AM to 3:30 PM IST
+  }
+  function shouldClearData() {
+    // Clear only between 8:00 AM and 9:15 AM IST on weekdays (fresh session start)
+    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    var day = ist.getUTCDay();
+    if (day === 0 || day === 6) return false;
+    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    return mins >= 480 && mins < 555; // 8:00 AM to 9:15 AM
+  }
+
   useEffect(function() {
     if (!hasOptions) return;
+    // Clear data only during 8:00-9:15 AM window (fresh session start)
+    if (shouldClearData()) {
+      setData(null);
+      setBnData(null);
+      prevPCRRef.current = {};
+    }
+    // Always fetch on mount — show last available data even after market close
     setLoading(true);
-    setData(null);
-    prevPCRRef.current = {};
     fetchSym(symbol, setData);
     fetchSym('BANKNIFTY', setBnData);
     clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(function() {
-      fetchSym(symbol, setData);
-      fetchSym('BANKNIFTY', setBnData);
-    }, 180000);
+    // Only keep polling during market hours
+    if (isMarketOpen()) {
+      intervalRef.current = setInterval(function() {
+        if (!isMarketOpen()) {
+          clearInterval(intervalRef.current);
+          return;
+        }
+        fetchSym(symbol, setData);
+        fetchSym('BANKNIFTY', setBnData);
+      }, 180000);
+    }
     return function() { clearInterval(intervalRef.current); };
   }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3167,9 +3199,9 @@ export default function Options() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#1e293b', borderRadius: 6, border: '1px solid #334155' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: '#4ade80' }} />
-            <span style={{ fontSize: 12, color: '#94a3b8' }}>
-              {lastUpdate ? 'Updated ' + lastUpdate : loading ? 'Loading...' : 'Waiting'}
+            <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: loading ? '#f59e0b' : isMarketOpen() ? '#4ade80' : '#64748b' }} />
+            <span style={{ fontSize: 12, color: isMarketOpen() ? '#94a3b8' : '#f59e0b' }}>
+              {isMarketOpen() ? (loading ? 'Loading...' : lastUpdate ? 'Updated ' + lastUpdate : 'Waiting') : shouldClearData() ? 'Clearing for new session...' : lastUpdate ? 'Last updated ' + lastUpdate + ' · market closed' : 'Market closed'}
             </span>
           </div>
           <button

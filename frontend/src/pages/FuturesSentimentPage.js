@@ -14,7 +14,7 @@ var SYMBOLS = [
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtOI(n) {
-  if (!n) return '—';
+  if (n === null || n === undefined) return '—';
   var abs = Math.abs(n);
   if (abs >= 100000) return (n / 100000).toFixed(1) + 'L';
   if (abs >= 1000)   return (n / 1000).toFixed(1) + 'K';
@@ -40,6 +40,16 @@ function confColor(n) {
   if (n >= 70) return '#4ade80';
   if (n >= 40) return '#f59e0b';
   return '#f87171';
+}
+
+function fmtPrice(n) {
+  if (n === null || n === undefined) return '—';
+  return n.toLocaleString();
+}
+
+function fmtDelta(n) {
+  if (n === null || n === undefined) return '—';
+  return (n > 0 ? '+' : '') + n;
 }
 
 // ─── Signal sparkline ─────────────────────────────────────────────────────────
@@ -82,12 +92,12 @@ function SignalSparkline(props) {
     return x + ',' + y;
   }).join(' ');
 
-  var lastVal  = values[values.length - 1];
-  var col      = lastVal > 0 ? '#4ade80' : lastVal < 0 ? '#f87171' : '#64748b';
-  var lastX    = padX + cW;
-  var lastY    = padY + cH - ((lastVal - minV) / range) * cH;
-  var zeroY    = padY + cH - ((0 - minV) / range) * cH;
-  var fillPts  = points + ' ' + lastX + ',' + (padY + cH) + ' ' + padX + ',' + (padY + cH);
+  var lastVal = values[values.length - 1];
+  var col     = lastVal > 0 ? '#4ade80' : lastVal < 0 ? '#f87171' : '#64748b';
+  var lastX   = padX + cW;
+  var lastY   = padY + cH - ((lastVal - minV) / range) * cH;
+  var zeroY   = padY + cH - ((0 - minV) / range) * cH;
+  var fillPts = points + ' ' + lastX + ',' + (padY + cH) + ' ' + padX + ',' + (padY + cH);
 
   return (
     <svg width={width} height={height} viewBox={'0 0 ' + width + ' ' + height}>
@@ -144,7 +154,8 @@ function StatBox(props) {
 
 function TrendPill(props) {
   var trend = props.trend || {};
-  var col   = trendColor(trend.label);
+  // Use passed color prop, or derive from trend label, or fallback
+  var col = props.color || trendColor(trend.label) || '#64748b';
   if (!trend.label) return null;
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -217,8 +228,8 @@ function HistoryTable(props) {
         </thead>
         <tbody>
           {rows.map(function(r, i) {
-            var sc  = r.signal_color || signalColor(r.signal);
-            var bg  = i % 2 === 0 ? 'transparent' : '#0f172a55';
+            var sc = r.signal_color || signalColor(r.signal);
+            var bg = i % 2 === 0 ? 'transparent' : '#0f172a55';
             return (
               <tr key={i} style={{ background: bg, borderBottom: '1px solid #0f172a' }}>
                 <td style={{ ...td, textAlign: 'left', color: '#64748b' }}>{r.time}</td>
@@ -226,16 +237,16 @@ function HistoryTable(props) {
                   {r.signal_emoji} {r.signal}
                 </td>
                 <td style={{ ...td, color: confColor(r.confidence) }}>{r.confidence}</td>
-                <td style={{ ...td, color: '#f1f5f9' }}>{r.ltp ? r.ltp.toLocaleString() : '—'}</td>
-                <td style={{ ...td, color: '#94a3b8' }}>{r.spot_ltp ? r.spot_ltp.toLocaleString() : '—'}</td>
+                <td style={{ ...td, color: '#f1f5f9' }}>{fmtPrice(r.ltp)}</td>
+                <td style={{ ...td, color: '#94a3b8' }}>{fmtPrice(r.spot_ltp)}</td>
                 <td style={{ ...td, color: r.basis >= 0 ? '#60a5fa' : '#f59e0b' }}>
                   {r.basis > 0 ? '+' : ''}{r.basis}
                 </td>
                 <td style={{ ...td, color: r.d_price >= 0 ? '#4ade80' : '#f87171' }}>
-                  {r.d_price > 0 ? '+' : ''}{r.d_price}
+                  {fmtDelta(r.d_price)}
                 </td>
                 <td style={{ ...td, color: r.d_oi >= 0 ? '#4ade80' : '#f87171' }}>
-                  {r.d_oi > 0 ? '+' : ''}{fmtOI(r.d_oi)}
+                  {r.d_oi !== undefined ? (r.d_oi > 0 ? '+' : '') + fmtOI(r.d_oi) : '—'}
                 </td>
                 <td style={{ ...td, color: '#64748b' }}>{fmtOI(r.d_vol)}</td>
               </tr>
@@ -277,7 +288,7 @@ function SignalLegend() {
   );
 }
 
-// ─── Main card for one symbol ─────────────────────────────────────────────────
+// ─── Main sentiment card ──────────────────────────────────────────────────────
 
 function SentimentCard(props) {
   var data = props.data;
@@ -298,8 +309,9 @@ function SentimentCard(props) {
     );
   }
 
-  var sc         = signalColor(data.signal);
-  var basisColor = data.basis >= 0 ? '#60a5fa' : '#f59e0b';
+  var sc         = data.signal_color || signalColor(data.signal);
+  var tc         = data.trend_color  || trendColor((data.trend || {}).label);
+  var basisCol   = data.basis >= 0 ? '#60a5fa' : '#f59e0b';
   var basisIntel = data.basis_intel || {};
   var options    = data.options     || {};
   var trend      = data.trend       || {};
@@ -317,14 +329,12 @@ function SentimentCard(props) {
                       fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Current Signal
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 26, fontWeight: 800, color: sc }}>
-              {data.signal_emoji} {data.signal}
-            </span>
-          </div>
+          <span style={{ fontSize: 26, fontWeight: 800, color: sc }}>
+            {data.signal_emoji} {data.signal}
+          </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-          <TrendPill trend={trend} />
+          <TrendPill trend={trend} color={tc} />
           <span style={{ fontSize: 10, color: '#334155' }}>⏱ {data.timestamp}</span>
         </div>
       </div>
@@ -340,24 +350,36 @@ function SentimentCard(props) {
 
       {/* ── Key stats ── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <StatBox label="Fut LTP"  value={data.ltp ? data.ltp.toLocaleString() : '—'} color="#f1f5f9" />
-        <StatBox label="Spot LTP" value={data.spot_ltp ? data.spot_ltp.toLocaleString() : '—'} color="#94a3b8" />
+        <StatBox
+          label="Fut LTP"
+          value={fmtPrice(data.ltp)}
+          color="#f1f5f9"
+        />
+        <StatBox
+          label="Spot LTP"
+          value={fmtPrice(data.spot_ltp)}
+          color="#94a3b8"
+        />
         <StatBox
           label="Basis"
           value={(data.basis > 0 ? '+' : '') + data.basis}
-          color={basisColor}
+          color={basisCol}
           sub={data.basis > 0 ? 'Premium' : data.basis < 0 ? 'Discount' : 'At par'}
-          subColor={basisColor}
+          subColor={basisCol}
         />
         <StatBox
           label="ΔPrice"
-          value={(data.d_price > 0 ? '+' : '') + data.d_price}
+          value={data.d_price !== undefined && data.d_price !== null
+            ? (data.d_price > 0 ? '+' : '') + data.d_price
+            : '—'}
           color={data.d_price >= 0 ? '#4ade80' : '#f87171'}
           sub="vs prev tick"
         />
         <StatBox
           label="ΔOI"
-          value={(data.d_oi > 0 ? '+' : '') + fmtOI(data.d_oi)}
+          value={data.d_oi !== undefined && data.d_oi !== null
+            ? (data.d_oi > 0 ? '+' : '') + fmtOI(data.d_oi)
+            : '—'}
           color={data.d_oi >= 0 ? '#4ade80' : '#f87171'}
           sub="vs prev tick"
         />
@@ -446,9 +468,9 @@ function SentimentCard(props) {
 export default function FuturesSentimentPage() {
   var { user }   = useAuth();
   var navigate   = useNavigate();
-  var [symbol, setSymbol]   = useState('NIFTY');
-  var [data,   setData]     = useState(null);
-  var [loading, setLoading] = useState(false);
+  var [symbol, setSymbol]         = useState('NIFTY');
+  var [data,   setData]           = useState(null);
+  var [loading, setLoading]       = useState(false);
   var [lastUpdate, setLastUpdate] = useState(null);
   var intervalRef = useRef(null);
 
@@ -564,7 +586,7 @@ export default function FuturesSentimentPage() {
         })}
       </div>
 
-      {/* ── Main card ── */}
+      {/* ── Main content ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
         {loading && !data && (
@@ -586,7 +608,7 @@ export default function FuturesSentimentPage() {
           <SignalLegend />
         </div>
 
-        {/* ── How confidence is calculated ── */}
+        {/* ── Confidence score breakdown ── */}
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
                       padding: '20px 24px' }}>
           <p style={{ fontSize: 10, color: '#475569', margin: '0 0 12px',
@@ -595,10 +617,10 @@ export default function FuturesSentimentPage() {
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[
-              { label: 'OI Magnitude',      weight: '35%', desc: 'Size of OI change vs rolling average — larger spike = stronger signal' },
+              { label: 'OI Magnitude',        weight: '35%', desc: 'Size of OI change vs rolling average — larger spike = stronger signal' },
               { label: 'Volume Confirmation', weight: '25%', desc: 'Volume in this tick vs average — above-average volume confirms intent' },
-              { label: 'Basis Alignment',   weight: '20%', desc: 'Does basis direction agree? Expanding premium confirms Long Buildup' },
-              { label: 'Consistency',       weight: '20%', desc: 'Last 3 ticks same signal = high consistency, mixed = low' },
+              { label: 'Basis Alignment',     weight: '20%', desc: 'Does basis direction agree? Expanding premium confirms Long Buildup' },
+              { label: 'Consistency',         weight: '20%', desc: 'Last 3 ticks same signal = high consistency, mixed = low' },
             ].map(function(row) {
               return (
                 <div key={row.label} style={{ display: 'flex', gap: 12, alignItems: 'flex-start',

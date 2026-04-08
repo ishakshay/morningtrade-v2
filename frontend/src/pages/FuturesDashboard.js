@@ -376,13 +376,39 @@ export default function FuturesDashboard() {
       .catch(function(e) { console.error(e); setLoading(false); });
   }
 
+  function isMarketOpen() {
+    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    var day = ist.getUTCDay();
+    if (day === 0 || day === 6) return false;
+    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    return mins >= 555 && mins < 930; // 9:15 AM to 3:30 PM IST
+  }
+  function shouldClearData() {
+    // Clear only between 8:00 AM and 9:15 AM IST — fresh session window
+    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    var day = ist.getUTCDay();
+    if (day === 0 || day === 6) return false;
+    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    return mins >= 480 && mins < 555; // 8:00 AM to 9:15 AM
+  }
+
   useEffect(function() {
     if (!hasOptions) return;
+    // Clear only during 8:00–9:15 AM window, keep last session data otherwise
+    if (shouldClearData()) {
+      setData(null);
+    }
+    // Always fetch on mount to show latest available data
     setLoading(true);
-    setData(null);
     fetchData(symbol);
     clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(function() { fetchData(symbol); }, 180000);
+    // Only poll during market hours
+    if (isMarketOpen()) {
+      intervalRef.current = setInterval(function() {
+        if (!isMarketOpen()) { clearInterval(intervalRef.current); return; }
+        fetchData(symbol);
+      }, 180000);
+    }
     return function() { clearInterval(intervalRef.current); };
   }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -426,9 +452,9 @@ export default function FuturesDashboard() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
                         background: '#1e293b', borderRadius: 6, border: '1px solid #334155' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
-                           background: loading ? '#f59e0b' : '#4ade80' }} />
-            <span style={{ fontSize: 12, color: '#94a3b8' }}>
-              {loading ? 'Loading…' : lastUpdate ? 'Updated ' + lastUpdate : 'Waiting'}
+                           background: loading ? '#f59e0b' : isMarketOpen() ? '#4ade80' : '#64748b' }} />
+            <span style={{ fontSize: 12, color: isMarketOpen() ? '#94a3b8' : '#f59e0b' }}>
+              {loading ? 'Loading…' : isMarketOpen() ? (lastUpdate ? 'Updated ' + lastUpdate : 'Waiting') : shouldClearData() ? 'Clearing for new session...' : lastUpdate ? 'Last updated ' + lastUpdate + ' · market closed' : 'Market closed'}
             </span>
           </div>
           <button onClick={function() { fetchData(symbol); }}

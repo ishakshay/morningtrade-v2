@@ -76,12 +76,18 @@ def save_vix_snapshot(vix_val):
         'time':  datetime.now().strftime('%H:%M'),
         'value': vix_val,
     })
-    if len(_vix_history) > 120:
-        _vix_history = _vix_history[-120:]
+    if len(_vix_history) > 130:
+        _vix_history = _vix_history[-130:]
 
 def get_vix_history():
     today = date.today().isoformat()
     return [h for h in _vix_history if h.get('date') == today]
+
+def get_latest_vix():
+    """Return most recent cached VIX — no live fetch, no session conflict."""
+    today = date.today().isoformat()
+    hist  = [h for h in _vix_history if h.get('date') == today]
+    return hist[-1]['value'] if hist else 0
 
 def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, spot_price=0, vix=0):
     today = date.today().isoformat()
@@ -91,7 +97,7 @@ def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, s
     if hist and hist[0].get('date') != today:
         _iv_history[symbol] = []
         hist = _iv_history[symbol]
-    spread      = round(atm_ce_iv - atm_pe_iv, 2) if atm_ce_iv > 0 and atm_pe_iv > 0 else None
+    spread       = round(atm_ce_iv - atm_pe_iv, 2) if atm_ce_iv > 0 and atm_pe_iv > 0 else None
     ce_vix_ratio = round(atm_ce_iv / vix, 3) if vix > 0 and atm_ce_iv > 0 else None
     pe_vix_ratio = round(atm_pe_iv / vix, 3) if vix > 0 and atm_pe_iv > 0 else None
     hist.append({
@@ -108,8 +114,8 @@ def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, s
         'ce_vix_ratio': ce_vix_ratio,
         'pe_vix_ratio': pe_vix_ratio,
     })
-    if len(hist) > 120:
-        _iv_history[symbol] = hist[-120:]
+    if len(hist) > 130:  # 9:15–3:30 = 125 snaps at 3-min intervals
+        _iv_history[symbol] = hist[-130:]
 
 def get_iv_history(symbol):
     today = date.today().isoformat()

@@ -37,8 +37,6 @@ def safe_int(val, default=0):
     except:
         return default
 
-# ─── Strike PCR + vol diff snapshot (12 readings) ────────────────────────────
-
 def save_strike_pcr_snapshot(symbol, five_strike_rows):
     global _strike_pcr_hist
     today   = date.today().isoformat()
@@ -76,8 +74,6 @@ def get_strike_pcr_history(symbol):
         return []
     return _strike_pcr_hist[symbol]['snapshots']
 
-# ─── Full chain cache ─────────────────────────────────────────────────────────
-
 def save_full_chain(symbol, payload):
     today = date.today().isoformat()
     _full_chain_cache[symbol] = {'date': today, 'data': payload}
@@ -89,8 +85,6 @@ def get_full_chain(symbol):
     if _full_chain_cache[symbol]['date'] != today:
         return None
     return _full_chain_cache[symbol]['data']
-
-# ─── Main fetch ───────────────────────────────────────────────────────────────
 
 def fetch_option_chain(symbol):
     nse = get_nse()
@@ -109,12 +103,20 @@ def fetch_option_chain(symbol):
             result['strike_pcr_history'] = get_strike_pcr_history(symbol)
 
             try:
-                from screeners.nse_market import save_iv_snapshot, get_iv_history
+                from screeners.nse_market import save_iv_snapshot, get_iv_history, get_latest_vix
                 chain   = result.get('chain', [])
                 atm     = result.get('atm_strike')
                 atm_row = next((r for r in chain if r['strike'] == atm), None)
                 if atm_row and atm_row.get('ce_iv', 0) > 0:
-                    save_iv_snapshot(symbol, atm_row['ce_iv'], atm_row['pe_iv'], atm_row.get('ce_ltp', 0), atm_row.get('pe_ltp', 0))
+                    save_iv_snapshot(
+                        symbol,
+                        atm_row['ce_iv'],
+                        atm_row['pe_iv'],
+                        atm_row.get('ce_ltp', 0),
+                        atm_row.get('pe_ltp', 0),
+                        result.get('spot_price', 0),
+                        get_latest_vix(),
+                    )
                 result['iv_history'] = get_iv_history(symbol)
             except Exception as e:
                 print(f"  [nse_options] IV error: {e}")
@@ -216,8 +218,8 @@ def save_pcr_snapshot(symbol, pcr_total, pcr_atm, pcr_5strike):
         'pcr_atm':     round(pcr_atm,     2),
         'pcr_5strike': round(pcr_5strike, 2),
     })
-    if len(_pcr_history[symbol]['snapshots']) > 120:
-        _pcr_history[symbol]['snapshots'] = _pcr_history[symbol]['snapshots'][-120:]
+    if len(_pcr_history[symbol]['snapshots']) > 130:
+        _pcr_history[symbol]['snapshots'] = _pcr_history[symbol]['snapshots'][-130:]
 
 def get_pcr_history(symbol):
     today = date.today().isoformat()
@@ -283,7 +285,6 @@ def parse_option_chain(data, symbol):
     end_idx        = min(len(strikes), atm_idx + nearby_range + 1)
     nearby_strikes = set(strikes[start_idx:end_idx])
 
-    # ATM ±5 = 11 strikes
     five_start   = max(0, atm_idx - 5)
     five_end     = min(len(strikes), atm_idx + 6)
     five_strikes = set(strikes[five_start:five_end])
@@ -415,7 +416,6 @@ def parse_option_chain(data, symbol):
                 'pcr_strike':   pcr_strike,
             })
 
-        # Full chain — all strikes
         pcr_strike_full = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0
         full_chain_rows.append({
             'strike':       strike,

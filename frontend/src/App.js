@@ -108,19 +108,22 @@ function Sidebar({ collapsed, setCollapsed }) {
         alignItems:     'center',
         justifyContent: collapsed ? 'center' : 'space-between',
         borderBottom:   '1px solid #1e293b',
-        minHeight:      64,
+        minHeight:      72,
       }}>
         <div
           style={{ cursor: 'pointer' }}
           onClick={function() { window.location.href = '/'; }}
         >
           {!collapsed && (
-            <span style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9', letterSpacing: '-0.3px' }}>
-              Morning<span style={{ color: '#60a5fa' }}>Trade</span>
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <img src="/logo1.png" alt="MorningTrade" style={{ height: 64, width: 64, objectFit: 'contain' }} />
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9', letterSpacing: '-0.3px' }}>
+                Morning<span style={{ color: '#60a5fa' }}>Trade</span>
+              </span>
+            </div>
           )}
           {collapsed && (
-            <span style={{ fontSize: 16, fontWeight: 700, color: '#60a5fa' }}>MT</span>
+            <img src="/logo1.png" alt="MT" style={{ height: 48, width: 48, objectFit: 'contain' }} />
           )}
         </div>
         <button
