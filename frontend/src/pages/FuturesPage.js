@@ -884,13 +884,7 @@ export default function FuturesPage() {
 
 
 
-        {/* ── 2. OI Flow sentiment (60s signal + smoothing) ── */}
-        <SentimentCard data={sentData} />
-
-        {/* ── 3. GammaBlast ── */}
-        <GammaBlast symbol={symbol} />
-
-        {/* ── 4. Basis tracker — fed by sentiment API ── */}
+        {/* ── 1. Basis tracker — fed by sentiment API ── */}
         {sentData && (
           <BasisTracker
             futures={{}}
@@ -900,6 +894,12 @@ export default function FuturesPage() {
             basisIntelNotes={basisIntelNotes}
           />
         )}
+
+        {/* ── 2. OI Flow sentiment (60s signal + smoothing) ── */}
+        <SentimentCard data={sentData} />
+
+        {/* ── 3. GammaBlast ── */}
+        <GammaBlast symbol={symbol} />
 
 
         {/* ── 6. Signal reference + confidence breakdown ── */}
