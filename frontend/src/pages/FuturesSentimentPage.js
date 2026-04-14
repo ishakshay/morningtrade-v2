@@ -11,6 +11,50 @@ var SYMBOLS = [
   { code: 'BANKNIFTY', label: 'BANKNIFTY', flag: '🏦' },
 ];
 
+// ─── Smoothing helpers ────────────────────────────────────────────────────────
+
+function smoothedSignal(history, rawSignal, rawConf) {
+  if (!history || history.length < 2) {
+    return { signal: rawSignal, confidence: rawConf, isShift: false, isSmoothed: false };
+  }
+  var recent = history.slice(-3);
+  var prev   = history.slice(-6, -3);
+
+  var counts = {};
+  recent.forEach(function(h) {
+    var s = h.signal || 'Neutral';
+    counts[s] = (counts[s] || 0) + 1;
+  });
+  var winner = null, winCount = 0;
+  Object.keys(counts).forEach(function(s) {
+    if (counts[s] > winCount) { winner = s; winCount = counts[s]; }
+  });
+  var votedSignal = (winCount >= 2) ? winner : 'Neutral';
+
+  var confVals = history.slice(-5).map(function(h) { return h.confidence || 0; });
+  var alpha = 0.4, ema = confVals[0];
+  for (var i = 1; i < confVals.length; i++) { ema = alpha * confVals[i] + (1 - alpha) * ema; }
+  var smoothConf = Math.round(ema);
+
+  var allSame = recent.every(function(h) { return h.signal === recent[0].signal; });
+  var prevSignal = prev.length > 0 ? prev[prev.length - 1].signal : null;
+  var isShift = allSame && prevSignal && prevSignal !== recent[0].signal;
+
+  if (isShift) {
+    return { signal: votedSignal, confidence: rawConf, isShift: true, isSmoothed: false };
+  }
+  return { signal: votedSignal, confidence: smoothConf, isShift: false, isSmoothed: votedSignal !== rawSignal };
+}
+
+var SIGNAL_COLORS = {
+  'Long Buildup':   '#4ade80',
+  'Short Covering': '#60a5fa',
+  'Short Buildup':  '#f87171',
+  'Long Unwinding': '#f59e0b',
+  'Absorption':     '#a78bfa',
+  'Neutral':        '#64748b',
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtOI(n) {
@@ -309,12 +353,20 @@ function SentimentCard(props) {
     );
   }
 
-  var sc         = data.signal_color || signalColor(data.signal);
+  var smooth     = smoothedSignal(data.history || [], data.signal, data.confidence);
+  var displaySig = smooth.signal;
+  var displayConf= smooth.confidence;
+  var sc         = SIGNAL_COLORS[displaySig] || data.signal_color || signalColor(data.signal);
   var tc         = data.trend_color  || trendColor((data.trend || {}).label);
   var basisCol   = data.basis >= 0 ? '#60a5fa' : '#f59e0b';
   var basisIntel = data.basis_intel || {};
   var options    = data.options     || {};
   var trend      = data.trend       || {};
+  var displayEmoji = displaySig === 'Long Buildup' ? '🟢'
+    : displaySig === 'Short Buildup'  ? '🔴'
+    : displaySig === 'Short Covering' ? '🔵'
+    : displaySig === 'Long Unwinding' ? '🟠'
+    : displaySig === 'Absorption'     ? '🟣' : '⚪';
 
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b',
@@ -329,9 +381,22 @@ function SentimentCard(props) {
                       fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Current Signal
           </p>
-          <span style={{ fontSize: 26, fontWeight: 800, color: sc }}>
-            {data.signal_emoji} {data.signal}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: sc }}>
+              {displayEmoji} {displaySig}
+            </span>
+            {smooth.isShift && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                             background: '#f59e0b22', border: '1px solid #f59e0b44', color: '#f59e0b' }}>
+                🔄 SHIFT
+              </span>
+            )}
+            {smooth.isSmoothed && !smooth.isShift && (
+              <span style={{ fontSize: 9, color: '#334155' }}>
+                smoothed · raw: {data.signal}
+              </span>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
           <TrendPill trend={trend} color={tc} />
@@ -344,8 +409,9 @@ function SentimentCard(props) {
         <p style={{ fontSize: 9, color: '#475569', margin: '0 0 5px',
                     fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           Signal Confidence
+          {smooth.isSmoothed && <span style={{ fontSize: 9, color: '#334155', marginLeft: 6, fontWeight: 400 }}>(EMA smoothed · raw: {data.confidence})</span>}
         </p>
-        <ConfBar n={data.confidence} />
+        <ConfBar n={displayConf} />
       </div>
 
       {/* ── Key stats ── */}

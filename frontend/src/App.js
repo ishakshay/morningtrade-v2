@@ -13,8 +13,7 @@ import Login from './pages/Login';
 import AuthSuccess from './pages/AuthSuccess';
 import IndicesTicker from './components/IndicesTicker';
 import News from './pages/News';
-import FuturesSentimentPage from './pages/FuturesSentimentPage';
-import FuturesDashboard from './pages/FuturesDashboard';
+import FuturesPage from './pages/FuturesPage';
 
 
 function FooterDisclaimer() {
@@ -70,16 +69,15 @@ function Sidebar({ collapsed, setCollapsed }) {
         { to: '/screener',       label: 'Screener'        },
         { to: '/sector-scope',   label: 'Sector Scope'    },
         { to: '/market-session', label: 'Market Sessions' },
-        { to: '/news', label: 'Market News' },
+        { to: '/news',           label: 'Market News'     },
       ],
     },
     {
-  label: 'Options',
-  links: [
-    { to: '/options',            label: 'Options Analysis'  },
-    { to: '/option-chain',       label: 'Option Chain'      },
-    { to: '/futures-sentiment',  label: 'Futures Sentiment' },
-    { to: '/futures-dashboard',  label: 'Futures Dashboard' },
+      label: 'Options',
+      links: [
+        { to: '/options',      label: 'Options Analysis' },
+        { to: '/option-chain', label: 'Option Chain'     },
+        { to: '/futures',      label: 'Futures'          },
       ],
     },
     {
@@ -92,7 +90,7 @@ function Sidebar({ collapsed, setCollapsed }) {
 
   return (
     <div style={{
-      width:         collapsed ? 56 : 220,
+      width:         collapsed ? 64 : 240,
       minHeight:     '100vh',
       background:    '#0f172a',
       borderRight:   '1px solid #1e293b',
@@ -102,38 +100,79 @@ function Sidebar({ collapsed, setCollapsed }) {
       flexDirection: 'column',
       overflow:      'hidden',
     }}>
+
+      {/* ── Header ── */}
       <div style={{
-        padding:        collapsed ? '16px 0' : '16px 20px',
+        padding:        collapsed ? '16px 0' : '20px 16px',
         display:        'flex',
+        flexDirection:  'column',
         alignItems:     'center',
-        justifyContent: collapsed ? 'center' : 'space-between',
         borderBottom:   '1px solid #1e293b',
-        minHeight:      72,
+        background:     'linear-gradient(160deg, #0f2010 0%, #0f172a 100%)',
+        position:       'relative',
       }}>
-        <div
-          style={{ cursor: 'pointer' }}
-          onClick={function() { window.location.href = '/'; }}
-        >
-          {!collapsed && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <img src="/logo1.png" alt="MorningTrade" style={{ height: 64, width: 64, objectFit: 'contain' }} />
-              <span style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9', letterSpacing: '-0.3px' }}>
-                Morning<span style={{ color: '#60a5fa' }}>Trade</span>
-              </span>
-            </div>
-          )}
-          {collapsed && (
-            <img src="/logo1.png" alt="MT" style={{ height: 48, width: 48, objectFit: 'contain' }} />
-          )}
-        </div>
+
+        {/* Collapse toggle — top right */}
         <button
           onClick={function() { setCollapsed(!collapsed); }}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: 16, padding: 0, lineHeight: 1 }}
+          style={{
+            position:   'absolute',
+            top:        10,
+            right:      10,
+            background: 'none',
+            border:     'none',
+            cursor:     'pointer',
+            color:      '#475569',
+            fontSize:   13,
+            padding:    0,
+            lineHeight: 1,
+          }}
         >
-          {collapsed ? '>>' : '<<'}
+          {collapsed ? '»' : '«'}
         </button>
+
+        {/* Logo mark */}
+        <div
+          onClick={function() { window.location.href = '/'; }}
+          style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}
+        >
+          <div style={{
+            background:   'rgba(99,153,34,0.12)',
+            borderRadius: 20,
+            padding:      collapsed ? 4 : 4,
+            display:      'flex',
+            alignItems:   'center',
+            justifyContent: 'center',
+            border:       '1px solid rgba(99,153,34,0.25)',
+            boxShadow:    '0 0 24px rgba(99,153,34,0.12)',
+            transition:   'padding 0.2s',
+          }}>
+            <img
+              src="/morningtrade-logo.svg"
+              alt="MorningTrade"
+              style={{
+                height:     collapsed ? 40 : 120,
+                width:      collapsed ? 40 : 120,
+                objectFit:  'contain',
+                transition: 'height 0.2s, width 0.2s',
+              }}
+            />
+          </div>
+
+          {!collapsed && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#f1f5f9', letterSpacing: '-0.3px', lineHeight: 1.2 }}>
+                Morning<span style={{ color: '#78c832' }}>Trade</span>
+              </div>
+              <div style={{ fontSize: 9, color: '#4a6741', letterSpacing: '1.8px', textTransform: 'uppercase', marginTop: 3 }}>
+                Market Intelligence
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* ── Nav links ── */}
       <div style={{ flex: 1, padding: '12px 0', overflowY: 'auto' }}>
         {sections.map(function(section) {
           return (
@@ -189,6 +228,7 @@ function Sidebar({ collapsed, setCollapsed }) {
         })}
       </div>
 
+      {/* ── User / auth ── */}
       {user && (
         <div style={{ padding: collapsed ? '12px 0' : '12px 16px', borderTop: '1px solid #1e293b' }}>
           {!collapsed && (
@@ -264,9 +304,8 @@ function AppLayout() {
               <Route path="/pricing"        element={<Pricing />}      />
               <Route path="/options"        element={<Options />}      />
               <Route path="/option-chain"   element={<OptionChain />}  />
-              <Route path="/futures-sentiment" element={<FuturesSentimentPage />} />
-              <Route path="/futures-dashboard" element={<FuturesDashboard />} />
-              <Route path="/news" element={<News />} />
+              <Route path="/futures"        element={<FuturesPage />}  />
+              <Route path="/news"           element={<News />}         />
             </Routes>
           </div>
           <FooterDisclaimer />

@@ -1,0 +1,106 @@
+<svg width="400" height="400" viewBox="0 0 680 420" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>MorningTrade logo mark</title>
+  <desc>Stylised tree with candlestick chart elements</desc>
+
+  <defs>
+    <radialGradient id="glow-root" cx="50%" cy="80%" r="55%">
+      <stop offset="0%" stop-color="#1D9E75" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#1D9E75" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="candle-glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#EF9F27" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#EF9F27" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="trunk-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#639922"/>
+      <stop offset="100%" stop-color="#27500A"/>
+    </linearGradient>
+    <linearGradient id="candle-bull" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5DCAA5"/>
+      <stop offset="100%" stop-color="#0F6E56"/>
+    </linearGradient>
+    <linearGradient id="candle-bear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F09595"/>
+      <stop offset="100%" stop-color="#A32D2D"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ambient glow -->
+  <ellipse cx="340" cy="310" rx="160" ry="40" fill="url(#glow-root)"/>
+  <rect x="260" y="160" width="210" height="160" rx="20" fill="url(#candle-glow)"/>
+
+  <!-- TRUNK -->
+  <rect x="328" y="190" width="24" height="120" rx="8" fill="url(#trunk-grad)"/>
+
+  <!-- Left branch -->
+  <path d="M336 230 Q295 210 272 180" fill="none" stroke="#3B6D11" stroke-width="10" stroke-linecap="round"/>
+  <path d="M336 230 Q295 210 272 180" fill="none" stroke="#639922" stroke-width="6" stroke-linecap="round"/>
+  <!-- Right branch -->
+  <path d="M348 225 Q392 202 416 170" fill="none" stroke="#3B6D11" stroke-width="10" stroke-linecap="round"/>
+  <path d="M348 225 Q392 202 416 170" fill="none" stroke="#639922" stroke-width="6" stroke-linecap="round"/>
+  <!-- Upper left branch -->
+  <path d="M338 208 Q308 188 290 158" fill="none" stroke="#27500A" stroke-width="7" stroke-linecap="round"/>
+  <path d="M338 208 Q308 188 290 158" fill="none" stroke="#639922" stroke-width="4" stroke-linecap="round"/>
+  <!-- Upper right branch -->
+  <path d="M342 205 Q370 182 388 148" fill="none" stroke="#27500A" stroke-width="7" stroke-linecap="round"/>
+  <path d="M342 205 Q370 182 388 148" fill="none" stroke="#639922" stroke-width="4" stroke-linecap="round"/>
+  <!-- Centre branch -->
+  <path d="M340 202 Q340 170 340 140" fill="none" stroke="#27500A" stroke-width="8" stroke-linecap="round"/>
+  <path d="M340 202 Q340 170 340 140" fill="none" stroke="#639922" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Left canopy cluster -->
+  <ellipse cx="262" cy="168" rx="38" ry="28" fill="#3B6D11" opacity="0.9"/>
+  <ellipse cx="258" cy="160" rx="30" ry="22" fill="#639922" opacity="0.85"/>
+  <ellipse cx="274" cy="154" rx="24" ry="18" fill="#97C459" opacity="0.7"/>
+  <ellipse cx="285" cy="184" rx="22" ry="16" fill="#3B6D11" opacity="0.8"/>
+  <ellipse cx="280" cy="178" rx="17" ry="13" fill="#639922" opacity="0.7"/>
+
+  <!-- Right canopy cluster -->
+  <ellipse cx="420" cy="158" rx="38" ry="28" fill="#3B6D11" opacity="0.9"/>
+  <ellipse cx="425" cy="150" rx="30" ry="22" fill="#639922" opacity="0.85"/>
+  <ellipse cx="410" cy="146" rx="24" ry="18" fill="#97C459" opacity="0.7"/>
+  <ellipse cx="398" cy="176" rx="22" ry="16" fill="#3B6D11" opacity="0.8"/>
+  <ellipse cx="404" cy="170" rx="17" ry="13" fill="#639922" opacity="0.7"/>
+
+  <!-- Top centre cluster -->
+  <ellipse cx="340" cy="128" rx="44" ry="32" fill="#27500A" opacity="0.9"/>
+  <ellipse cx="340" cy="120" rx="36" ry="26" fill="#3B6D11" opacity="0.9"/>
+  <ellipse cx="340" cy="112" rx="28" ry="20" fill="#639922" opacity="0.85"/>
+  <ellipse cx="340" cy="102" rx="20" ry="15" fill="#97C459" opacity="0.75"/>
+  <ellipse cx="302" cy="140" rx="26" ry="19" fill="#3B6D11" opacity="0.85"/>
+  <ellipse cx="296" cy="132" rx="20" ry="15" fill="#639922" opacity="0.75"/>
+  <ellipse cx="378" cy="136" rx="26" ry="19" fill="#3B6D11" opacity="0.85"/>
+  <ellipse cx="384" cy="128" rx="20" ry="15" fill="#639922" opacity="0.75"/>
+
+  <!-- Highlight -->
+  <ellipse cx="330" cy="98" rx="12" ry="8" fill="#C0DD97" opacity="0.4"/>
+
+  <!-- CANDLESTICKS -->
+  <line x1="273" y1="300" x2="273" y2="265" stroke="#E24B4A" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="265" y="275" width="16" height="25" rx="3" fill="url(#candle-bear)"/>
+
+  <line x1="303" y1="298" x2="303" y2="250" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="295" y="260" width="16" height="38" rx="3" fill="url(#candle-bull)"/>
+
+  <line x1="333" y1="296" x2="333" y2="236" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="325" y="248" width="16" height="48" rx="3" fill="url(#candle-bull)"/>
+
+  <line x1="363" y1="294" x2="363" y2="226" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="355" y="238" width="16" height="56" rx="3" fill="url(#candle-bull)"/>
+
+  <line x1="393" y1="296" x2="393" y2="232" stroke="#1D9E75" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="385" y="244" width="16" height="52" rx="3" fill="url(#candle-bull)"/>
+
+  <line x1="423" y1="294" x2="423" y2="238" stroke="#E24B4A" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="415" y="248" width="16" height="46" rx="3" fill="url(#candle-bear)"/>
+
+  <!-- Ground line -->
+  <line x1="240" y1="310" x2="460" y2="310" stroke="#639922" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- Root spread -->
+  <path d="M328 308 Q310 318 290 314" fill="none" stroke="#27500A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M328 308 Q310 318 290 314" fill="none" stroke="#3B6D11" stroke-width="3" stroke-linecap="round"/>
+  <path d="M352 308 Q372 318 392 314" fill="none" stroke="#27500A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M352 308 Q372 318 392 314" fill="none" stroke="#3B6D11" stroke-width="3" stroke-linecap="round"/>
+
+</svg>

@@ -780,7 +780,7 @@ function IVDashboard(props) {
       {/* IV Chart */}
       <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>IV trend — {symbol} ATM · full day 9:15–3:30 · {history.length} readings</p>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>IV trend — {symbol} ATM strike</p>
           <div style={{ display: 'flex', gap: 12, fontSize: 11 }}>
             <span style={{ color: '#f87171' }}>■ CE IV</span>
             <span style={{ color: '#4ade80' }}>■ PE IV</span>
@@ -1474,7 +1474,573 @@ function VolumeLeaders(props) {
   );
 }
 
-// Paste this into Options.js right before: export default function Options()
+// ─── OTM Positioning Intelligence ───────────────────────────────────────────
+
+function OTMPositioning(props) {
+  var chain          = props.chain          || [];   // full_chain rows — each has strike, is_atm, ce_iv, pe_iv, ce_oi, pe_oi, ce_chg_oi, pe_chg_oi
+  var strikeHistory  = props.strikeHistory  || [];   // [{time, strikes:{[strike]:{ce_iv,pe_iv,ce_oi,pe_oi,...}}}]
+  var vix            = props.vix            || 0;    // India VIX current value
+  var atm            = props.atm            || 0;    // ATM strike
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  function fmtOI(n) {
+    if (!n && n !== 0) return '—';
+    var sign = n < 0 ? '-' : '+';
+    var abs  = Math.abs(n);
+    if (abs >= 100000) return sign + (abs / 100000).toFixed(1) + 'L';
+    if (abs >= 1000)   return sign + (abs / 1000).toFixed(0) + 'K';
+    return (n >= 0 ? '+' : '') + n;
+  }
+
+  function pct(val, base) {
+    if (!base || base === 0) return 0;
+    return ((val - base) / Math.abs(base)) * 100;
+  }
+
+  // ── select OTM strikes: ATM ±5 (11 strikes total) ──────────────────────────
+  // chain is sorted by strike; find ATM index then pick neighbours
+  var sorted   = chain.slice().sort(function(a, b) { return a.strike - b.strike; });
+  var atmIdx   = sorted.findIndex(function(r) { return r.strike === atm; });
+  if (atmIdx < 0) atmIdx = sorted.findIndex(function(r) { return r.is_atm; });
+
+  var indices  = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
+  var strikes  = indices
+    .map(function(offset) { return sorted[atmIdx + offset]; })
+    .filter(Boolean);
+
+  // ── B1: locked 10:00–10:15 baseline (first snapshot at or after 10:00) ────
+  // We derive B1 from strikeHistory: average of snapshots between 10:00–10:15
+  var b1Snaps = strikeHistory.filter(function(s) {
+    return s.time >= '10:00' && s.time <= '10:15';
+  });
+  // Fallback: use first snapshot if none in window yet
+  if (b1Snaps.length === 0 && strikeHistory.length > 0) b1Snaps = [strikeHistory[0]];
+
+  function getB1IV(strike, side) {
+    if (b1Snaps.length === 0) return null;
+    var vals = b1Snaps.map(function(s) {
+      var e = s.strikes ? s.strikes[String(strike)] : null;
+      if (!e || typeof e !== 'object') return null;
+      return side === 'ce' ? (e.ce_iv || null) : (e.pe_iv || null);
+    }).filter(function(v) { return v !== null; });
+    if (vals.length === 0) return null;
+    return vals.reduce(function(a, b) { return a + b; }, 0) / vals.length;
+  }
+
+  // ── B2: rolling 45-min baseline (last 15 snapshots @ 3-min = 45 min) ──────
+  var b2Snaps = strikeHistory.slice(-15);
+
+  function getB2IV(strike, side) {
+    if (b2Snaps.length === 0) return null;
+    var vals = b2Snaps.map(function(s) {
+      var e = s.strikes ? s.strikes[String(strike)] : null;
+      if (!e || typeof e !== 'object') return null;
+      return side === 'ce' ? (e.ce_iv || null) : (e.pe_iv || null);
+    }).filter(function(v) { return v !== null; });
+    if (vals.length === 0) return null;
+    return vals.reduce(function(a, b) { return a + b; }, 0) / vals.length;
+  }
+
+  // ── B2 OI baseline: OI at session open (first snapshot) ──────────────────
+  var firstSnap = strikeHistory.length > 0 ? strikeHistory[0] : null;
+
+  function getOpenOI(strike, side) {
+    if (!firstSnap) return null;
+    var e = firstSnap.strikes ? firstSnap.strikes[String(strike)] : null;
+    if (!e || typeof e !== 'object') return null;
+    return side === 'ce' ? (e.ce_oi || null) : (e.pe_oi || null);
+  }
+
+  // ── PPI score calculation ─────────────────────────────────────────────────
+  // Requires: IV deviation vs B1 (0-20), vs B2 (0-20), cum OI (0-20), OI velocity (0-20), streak (0-20)
+  // We compute streak as consecutive snapshots where normIV > b2NormIV
+  function getStreak(strike, side) {
+    if (strikeHistory.length < 2) return 0;
+    var count = 0;
+    var snaps = strikeHistory.slice().reverse(); // newest first
+    for (var i = 0; i < snaps.length; i++) {
+      var e = snaps[i].strikes ? snaps[i].strikes[String(strike)] : null;
+      if (!e || typeof e !== 'object') break;
+      var iv = side === 'ce' ? (e.ce_iv || 0) : (e.pe_iv || 0);
+      var b2 = getB2IV(strike, side);
+      if (b2 && iv > b2) { count++; } else { break; }
+    }
+    return count;
+  }
+
+  function scoreComponent(val, thresholds) {
+    // thresholds: [{min, pts}] sorted ascending
+    var pts = 0;
+    thresholds.forEach(function(t) { if (val >= t.min) pts = t.pts; });
+    return pts;
+  }
+
+  function computePPI(row, side) {
+    var iv     = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
+    var vix_   = vix || 1;
+    var normIV = iv / vix_;
+
+    var b1iv   = getB1IV(row.strike, side);
+    var b2iv   = getB2IV(row.strike, side);
+    var b1Norm = b1iv ? b1iv / vix_ : null;
+    var b2Norm = b2iv ? b2iv / vix_ : null;
+
+    var b1Dev  = b1Norm ? Math.abs(pct(normIV, b1Norm)) : 0;
+    var b2Dev  = b2Norm ? Math.abs(pct(normIV, b2Norm)) : 0;
+
+    // Absolute IV move filter — must be at least 2% change
+    var ivMoved = b1iv ? Math.abs(iv - b1iv) >= 2 : false;
+    if (!ivMoved && b1iv) return 0;
+
+    var b1Score  = scoreComponent(b1Dev, [{min:5,pts:5},{min:10,pts:10},{min:15,pts:15},{min:20,pts:20}]);
+    var b2Score  = scoreComponent(b2Dev, [{min:5,pts:5},{min:10,pts:10},{min:15,pts:15},{min:20,pts:20}]);
+
+    // OI: cumulative from open
+    var openOI  = getOpenOI(row.strike, side);
+    var currOI  = side === 'ce' ? (row.ce_oi || 0) : (row.pe_oi || 0);
+    var cumOI   = openOI ? currOI - openOI : 0;
+    var cumPct  = openOI && openOI > 0 ? (cumOI / openOI) * 100 : 0;
+    var oiScore = scoreComponent(cumPct, [{min:5,pts:5},{min:10,pts:10},{min:15,pts:15},{min:20,pts:20}]);
+
+    // OI velocity: chg_oi from chain row
+    var chgOI   = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
+    var velScore = scoreComponent(Math.abs(chgOI), [{min:2000,pts:5},{min:5000,pts:10},{min:10000,pts:15},{min:20000,pts:20}]);
+
+    // Streak
+    var streak      = getStreak(row.strike, side);
+    var streakScore = scoreComponent(streak, [{min:2,pts:5},{min:4,pts:10},{min:6,pts:15},{min:8,pts:20}]);
+
+    return Math.min(100, b1Score + b2Score + oiScore + velScore + streakScore);
+  }
+
+  // ── IV direction arrow ────────────────────────────────────────────────────
+  function ivDir(strike, side) {
+    if (strikeHistory.length < 2) return '→';
+    var last2 = strikeHistory.slice(-2);
+    var prev  = last2[0].strikes ? last2[0].strikes[String(strike)] : null;
+    var curr  = last2[1].strikes ? last2[1].strikes[String(strike)] : null;
+    if (!prev || !curr || typeof prev !== 'object' || typeof curr !== 'object') return '→';
+    var prevIV = side === 'ce' ? (prev.ce_iv || 0) : (prev.pe_iv || 0);
+    var currIV = side === 'ce' ? (curr.ce_iv || 0) : (curr.pe_iv || 0);
+    var diff   = currIV - prevIV;
+    if (diff > 1)   return '↑↑';
+    if (diff > 0.3) return '↑';
+    if (diff < -1)  return '↓↓';
+    if (diff < -0.3)return '↓';
+    return '→';
+  }
+
+  // ── Driver: OI + IV matrix ────────────────────────────────────────────────
+  function driver(row, side) {
+    var dir      = ivDir(row.strike, side);
+    var chgOI    = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
+    var oiUp     = chgOI > 1000;
+    var oiDn     = chgOI < -1000;
+    var ivUp     = dir === '↑' || dir === '↑↑';
+    var ivDn     = dir === '↓' || dir === '↓↓';
+    if (oiUp  && ivUp)  return { label: 'BUY',    color: side === 'ce' ? '#4ade80' : '#f87171', bias: side === 'ce' ? 'bullish' : 'bearish' };
+    if (oiUp  && ivDn)  return { label: 'WRITE',  color: side === 'ce' ? '#f87171' : '#4ade80', bias: side === 'ce' ? 'bearish' : 'bullish' };
+    if (oiDn  && ivUp)  return { label: 'COVER',  color: '#f59e0b', bias: side === 'ce' ? 'bullish' : 'bearish' };
+    if (oiDn  && ivDn)  return { label: 'UNWIND', color: '#64748b', bias: side === 'ce' ? 'bearish' : 'bullish' };
+    return { label: '—', color: '#334155', bias: 'neutral' };
+  }
+
+  // ── PPI state ─────────────────────────────────────────────────────────────
+  function ppiState(score) {
+    if (score >= 70) return 'high';
+    if (score >= 40) return 'early';
+    return 'none';
+  }
+
+  function stateLabel(score, side) {
+    var s = ppiState(score);
+    if (s === 'high') return side === 'ce' ? '🟢 BULLISH' : '🔴 BEARISH';
+    if (s === 'early') return '🟡 EARLY';
+    return '⚪ None';
+  }
+
+  function stateColor(score, side) {
+    var s = ppiState(score);
+    if (s === 'high') return side === 'ce' ? '#4ade80' : '#f87171';
+    if (s === 'early') return '#f59e0b';
+    return '#475569';
+  }
+
+  // ── Skew shape (CE side flattening/steepening) ────────────────────────────
+  function skewShape(sidesRows, side) {
+    // Compare OTM IV vs ATM IV — if OTM is catching up to ATM = flattening
+    var atmRow = sidesRows.find(function(r) { return r.strike === atm || r.is_atm; });
+    if (!atmRow) return null;
+    var atmIV  = side === 'ce' ? (atmRow.ce_iv || 0) : (atmRow.pe_iv || 0);
+    var otmRows = sidesRows.filter(function(r) { return r.strike !== atm && !r.is_atm; });
+    if (otmRows.length === 0) return null;
+    var avgOTM = otmRows.reduce(function(s, r) {
+      return s + (side === 'ce' ? (r.ce_iv || 0) : (r.pe_iv || 0));
+    }, 0) / otmRows.length;
+    var gap = atmIV - avgOTM;
+    if (gap < 1)  return 'FLAT';
+    if (gap < 3)  return 'NORMAL';
+    return 'STEEP';
+  }
+
+  // ── Panel verdict ─────────────────────────────────────────────────────────
+  function panelVerdict(rows) {
+    var ceRows = rows.filter(function(r) { return r.strike > atm; });
+    var peRows = rows.filter(function(r) { return r.strike < atm; });
+
+    var ceScores = ceRows.map(function(r) { return computePPI(r, 'ce'); });
+    var peScores = peRows.map(function(r) { return computePPI(r, 'pe'); });
+
+    var ceAbove = ceScores.filter(function(s) { return s >= 40; });
+    var peAbove = peScores.filter(function(s) { return s >= 40; });
+
+    var ceAvg   = ceScores.length ? ceScores.reduce(function(a,b){return a+b;},0)/ceScores.length : 0;
+    var peAvg   = peScores.length ? peScores.reduce(function(a,b){return a+b;},0)/peScores.length : 0;
+
+    var strength = function(avg) { return avg >= 70 ? 'STRONG' : avg >= 40 ? 'MODERATE' : 'WEAK'; };
+
+    if (ceAbove.length >= 2 && peAbove.length < 1) {
+      return { text: 'CE ACCUMULATION BUILDING — WATCH ' + ceRows.map(function(r){return r.strike;}).join('–'), bias: 'BULLISH', strength: strength(ceAvg), color: '#4ade80', state: ceAvg >= 70 ? 'high' : 'early' };
+    }
+    if (peAbove.length >= 2 && ceAbove.length < 1) {
+      return { text: 'PE ACCUMULATION BUILDING — WATCH ' + peRows.map(function(r){return r.strike;}).join('–'), bias: 'BEARISH', strength: strength(peAvg), color: '#f87171', state: peAvg >= 70 ? 'high' : 'early' };
+    }
+    if (ceAbove.length >= 1 && peAbove.length >= 1) {
+      return { text: 'BOTH SIDES ACTIVE — VIX EXPANSION OR STRADDLE BUILD', bias: 'NEUTRAL', strength: '—', color: '#f59e0b', state: 'early' };
+    }
+    return { text: 'NO SIGNIFICANT POSITIONING DETECTED', bias: '—', strength: '—', color: '#475569', state: 'none' };
+  }
+
+  // ── Dominance ratio ───────────────────────────────────────────────────────
+  function dominance(rows) {
+    var ceRows   = rows.filter(function(r) { return r.strike > atm; });
+    var peRows   = rows.filter(function(r) { return r.strike < atm; });
+    var ceTotal  = ceRows.reduce(function(s,r){ return s + computePPI(r, 'ce'); }, 0);
+    var peTotal  = peRows.reduce(function(s,r){ return s + computePPI(r, 'pe'); }, 0);
+    var tot      = ceTotal + peTotal || 1;
+    return { cePct: Math.round((ceTotal/tot)*100), pePct: Math.round((peTotal/tot)*100) };
+  }
+
+  // ── Glossary ───────────────────────────────────────────────────────────────
+  var [openGloss, setOpenGloss] = React.useState(null);
+  var glossary = [
+    { term: 'Norm IV',   full: 'Normalised Implied Volatility',           desc: 'Strike IV divided by India VIX. Removes market-wide fear so you can isolate strike-specific demand. Comparable across strikes and days.' },
+    { term: 'vs B1',     full: 'Deviation from Settled Open (10:00–10:15)', desc: 'How much Norm IV has moved from the 10:00–10:15 settled baseline. High B1 deviation means the move is significant vs the whole session.' },
+    { term: 'vs B2',     full: 'Deviation from Rolling 45-min Baseline',  desc: 'How much Norm IV has moved in the last 45 mins. High B2 = fresh and active. High B1 + high B2 = sustained institutional accumulation.' },
+    { term: 'Cum OI Δ',  full: 'Cumulative OI Change from 9:15 Open',     desc: 'Total net OI added since open. Not snapshot-to-snapshot — this is the full session picture. Sustained build = institutional, not retail.' },
+    { term: 'Dir',       full: 'IV Direction (last 3-min snapshot)',       desc: '↑↑ rising fast (>1%), ↑ rising slowly, → flat, ↓ falling, ↓↓ falling fast. Velocity matters more than absolute level.' },
+    { term: 'Driver',    full: 'OI + IV Matrix Verdict',                   desc: 'BUY = OI↑ + IV↑ (buyer initiating). WRITE = OI↑ + IV↓ (writer initiating). COVER = OI↓ + IV↑ (short covering). UNWIND = OI↓ + IV↓ (long exiting).' },
+    { term: 'Streak',    full: 'Consecutive Snapshots Above B2 Threshold', desc: 'How many 3-min snapshots in a row have stayed elevated. 2 snaps = 6 mins. 6 snaps = 18 mins of sustained activity = high confidence.' },
+    { term: 'PPI',       full: 'Positioning Pressure Index (0–100)',       desc: 'Composite: IV vs B1 (20pts) + IV vs B2 (20pts) + Cumulative OI (20pts) + OI velocity (20pts) + Streak (20pts). Sustained accumulation scores high, single spikes do not.' },
+    { term: 'State',     full: 'Signal State',                             desc: '⚪ None (0–39): no signal. 🟡 EARLY (40–69): anomaly building, not confirmed. 🟢/🔴 HIGH CONVICTION (70+): institutional-scale footprint confirmed.' },
+    { term: 'CE / PE',   full: 'Call / Put Option',                        desc: 'CE = Call (buyer profits if price rises). PE = Put (buyer profits if price falls). OTM CE accumulation → upside positioning. OTM PE accumulation → downside/hedge.' },
+    { term: 'Skew',      full: 'Volatility Skew Shape',                    desc: 'FLAT = OTM IV close to ATM IV (accumulation happening). NORMAL = standard smile. STEEP = OTM IV well above ATM (heavy protection demand).' },
+    { term: 'Dominance', full: 'CE vs PE Positioning Pressure Share',      desc: 'PPI-weighted share of total pressure across all strikes. CE 70%+ = clear bullish lean. PE 70%+ = clear bearish lean. Near 50/50 = balanced or event-driven.' },
+  ];
+
+  if (!chain.length || !atm) return null;
+
+  var verdict    = panelVerdict(strikes);
+  var dom        = dominance(strikes);
+  var ceShape    = skewShape(strikes.filter(function(r){return r.strike >= atm;}), 'ce');
+  var peShape    = skewShape(strikes.filter(function(r){return r.strike <= atm;}), 'pe');
+  var verdictIcon = verdict.state === 'high' ? (verdict.bias === 'BULLISH' ? '🟢' : verdict.bias === 'BEARISH' ? '🔴' : '🟡') : verdict.state === 'early' ? '🟡' : '⚪';
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
+
+      {/* Header */}
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            📡 OTM Positioning Intelligence
+          </p>
+          <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>
+            ATM ±5 strikes · Norm IV vs B1 (10:00–10:15) &amp; B2 (rolling 45-min) · OI + IV matrix · 3-min snapshots
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>CE SKEW</p>
+            <span style={{ fontSize: 11, fontWeight: 700, color: ceShape === 'FLAT' ? '#4ade80' : ceShape === 'STEEP' ? '#f87171' : '#f59e0b' }}>{ceShape || '—'}</span>
+          </div>
+          <div style={{ width: 1, height: 28, background: '#1e293b' }} />
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>PE SKEW</p>
+            <span style={{ fontSize: 11, fontWeight: 700, color: peShape === 'FLAT' ? '#f87171' : peShape === 'STEEP' ? '#4ade80' : '#f59e0b' }}>{peShape || '—'}</span>
+          </div>
+          <div style={{ width: 1, height: 28, background: '#1e293b' }} />
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>VIX</p>
+            <span style={{ fontSize: 13, fontWeight: 800, color: vix > 20 ? '#f87171' : vix > 15 ? '#f59e0b' : '#4ade80' }}>{vix > 0 ? vix.toFixed(2) : '—'}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Verdict Banner */}
+      <div style={{ padding: '10px 20px', borderBottom: '1px solid #1e293b', background: verdict.state === 'high' ? 'rgba(74,222,128,0.04)' : verdict.state === 'early' ? 'rgba(245,158,11,0.04)' : 'transparent', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 16 }}>{verdictIcon}</span>
+        <div style={{ flex: 1 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: verdict.color, fontFamily: 'monospace', letterSpacing: '0.02em' }}>
+            {verdict.text}
+          </span>
+          {verdict.bias !== '—' && (
+            <span style={{ marginLeft: 16, fontSize: 11, color: '#475569' }}>
+              BIAS: <span style={{ color: verdict.color, fontWeight: 700 }}>{verdict.bias}</span>
+              {verdict.strength !== '—' && <span style={{ marginLeft: 8, color: '#475569' }}>· STRENGTH: <span style={{ color: '#94a3b8', fontWeight: 600 }}>{verdict.strength}</span></span>}
+            </span>
+          )}
+        </div>
+        {/* Dominance bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: '#f87171', fontWeight: 700 }}>CE {dom.cePct}%</span>
+          <div style={{ width: 80, height: 6, background: '#1e293b', borderRadius: 3, overflow: 'hidden', display: 'flex' }}>
+            <div style={{ width: dom.cePct + '%', background: '#f87171', transition: 'width 0.4s' }} />
+            <div style={{ width: dom.pePct + '%', background: '#4ade80', transition: 'width 0.4s' }} />
+          </div>
+          <span style={{ fontSize: 10, color: '#4ade80', fontWeight: 700 }}>PE {dom.pePct}%</span>
+        </div>
+      </div>
+
+      {/* Mirrored CE | STRIKE | PE table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#0d1424' }}>
+              {/* CE side headers — right-aligned, reading inward toward strike */}
+              <th style={{ padding: '8px 10px', color: '#f87171', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #f8717133', colSpan: 5 }} colSpan={5}>
+                ◀ CALLS (CE)
+              </th>
+              {/* Strike centre */}
+              <th style={{ padding: '8px 14px', color: '#60a5fa', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #60a5fa33', background: '#0a1020' }}>
+                STRIKE
+              </th>
+              {/* PE side headers — left-aligned, reading outward from strike */}
+              <th style={{ padding: '8px 10px', color: '#4ade80', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #4ade8033', colSpan: 5 }} colSpan={5}>
+                PUTS (PE) ▶
+              </th>
+            </tr>
+            <tr style={{ background: '#1e293b' }}>
+              {/* CE sub-headers — right to left toward strike */}
+              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>State</th>
+              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>PPI</th>
+              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>Driver</th>
+              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>Cum OI</th>
+              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>Norm IV · B1 · B2</th>
+              {/* Strike */}
+              <th style={{ padding: '7px 14px', color: '#64748b', fontWeight: 600, textAlign: 'center', fontSize: 10, background: '#0a1020', whiteSpace: 'nowrap' }}>
+                <span style={{ display: 'block', fontSize: 8, color: '#334155' }}>VIX {vix > 0 ? vix.toFixed(1) : '—'}</span>
+              </th>
+              {/* PE sub-headers — left to right away from strike */}
+              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>Norm IV · B1 · B2</th>
+              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>Cum OI</th>
+              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>Driver</th>
+              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>PPI</th>
+              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {strikes.map(function(row) {
+              var isATM  = row.strike === atm || row.is_atm;
+              var rowBg  = isATM ? 'rgba(96,165,250,0.06)' : 'transparent';
+
+              // ── CE data ──
+              var ceRow    = row; // same strike row has both CE and PE fields
+              var cePPI    = isATM ? 0 : computePPI(ceRow, 'ce');
+              var ceIV     = row.ce_iv || 0;
+              var ceNormIV = vix > 0 ? ceIV / vix : 0;
+              var ceB1iv   = getB1IV(row.strike, 'ce');
+              var ceB2iv   = getB2IV(row.strike, 'ce');
+              var ceB1Norm = ceB1iv && vix > 0 ? ceB1iv / vix : null;
+              var ceB2Norm = ceB2iv && vix > 0 ? ceB2iv / vix : null;
+              var ceB1Dev  = ceB1Norm ? pct(ceNormIV, ceB1Norm) : null;
+              var ceB2Dev  = ceB2Norm ? pct(ceNormIV, ceB2Norm) : null;
+              var ceOpenOI = getOpenOI(row.strike, 'ce');
+              var ceCumOI  = ceOpenOI ? (row.ce_oi || 0) - ceOpenOI : null;
+              var ceDir    = isATM ? '→' : ivDir(row.strike, 'ce');
+              var ceDrv    = isATM ? { label: '—', color: '#334155' } : driver(row, 'ce');
+              var ceStreak = isATM ? 0 : getStreak(row.strike, 'ce');
+              var cePPIColor   = cePPI >= 70 ? '#4ade80' : cePPI >= 40 ? '#f59e0b' : '#475569';
+              var ceDirColor   = ceDir === '↑↑' || ceDir === '↑' ? '#4ade80' : ceDir === '↓↓' || ceDir === '↓' ? '#f87171' : '#475569';
+              var ceB1Color    = ceB1Dev !== null ? (ceB1Dev > 10 ? '#4ade80' : ceB1Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
+              var ceB2Color    = ceB2Dev !== null ? (ceB2Dev > 10 ? '#4ade80' : ceB2Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
+              var ceCumColor   = ceCumOI !== null ? (Math.abs(ceCumOI) > 15000 ? '#4ade80' : Math.abs(ceCumOI) > 8000 ? '#f59e0b' : '#64748b') : '#334155';
+              var ceStateLabel = stateLabel(cePPI, 'ce');
+              var ceStateColor = stateColor(cePPI, 'ce');
+
+              // ── PE data ──
+              var pePPI    = isATM ? 0 : computePPI(row, 'pe');
+              var peIV     = row.pe_iv || 0;
+              var peNormIV = vix > 0 ? peIV / vix : 0;
+              var peB1iv   = getB1IV(row.strike, 'pe');
+              var peB2iv   = getB2IV(row.strike, 'pe');
+              var peB1Norm = peB1iv && vix > 0 ? peB1iv / vix : null;
+              var peB2Norm = peB2iv && vix > 0 ? peB2iv / vix : null;
+              var peB1Dev  = peB1Norm ? pct(peNormIV, peB1Norm) : null;
+              var peB2Dev  = peB2Norm ? pct(peNormIV, peB2Norm) : null;
+              var peOpenOI = getOpenOI(row.strike, 'pe');
+              var peCumOI  = peOpenOI ? (row.pe_oi || 0) - peOpenOI : null;
+              var peDir    = isATM ? '→' : ivDir(row.strike, 'pe');
+              var peDrv    = isATM ? { label: '—', color: '#334155' } : driver(row, 'pe');
+              var peStreak = isATM ? 0 : getStreak(row.strike, 'pe');
+              var pePPIColor   = pePPI >= 70 ? '#f87171' : pePPI >= 40 ? '#f59e0b' : '#475569';
+              var peDirColor   = peDir === '↑↑' || peDir === '↑' ? '#f87171' : peDir === '↓↓' || peDir === '↓' ? '#4ade80' : '#475569';
+              var peB1Color    = peB1Dev !== null ? (peB1Dev > 10 ? '#f87171' : peB1Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
+              var peB2Color    = peB2Dev !== null ? (peB2Dev > 10 ? '#f87171' : peB2Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
+              var peCumColor   = peCumOI !== null ? (Math.abs(peCumOI) > 15000 ? '#f87171' : Math.abs(peCumOI) > 8000 ? '#f59e0b' : '#64748b') : '#334155';
+              var peStateLabel = stateLabel(pePPI, 'pe');
+              var peStateColor = stateColor(pePPI, 'pe');
+
+              function fmtDev(v) { return v !== null ? (v > 0 ? '+' : '') + v.toFixed(1) + '%' : '—'; }
+
+              return (
+                <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
+
+                  {/* ── CE side (right-to-left: state | ppi | driver | cumOI | normIV·b1·b2) ── */}
+                  <td style={{ padding: '9px 10px', textAlign: 'left', borderRight: '1px solid #1e293b11' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: ceStateColor, whiteSpace: 'nowrap' }}>{ceStateLabel}</span>
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '1px solid #1e293b11' }}>
+                    {isATM ? <span style={{ color: '#334155' }}>—</span> : (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <div style={{ width: 36, height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ width: cePPI + '%', height: '100%', background: cePPIColor, borderRadius: 2, transition: 'width 0.5s' }} />
+                        </div>
+                        <span style={{ color: cePPIColor, fontWeight: 700, fontSize: 11, minWidth: 22 }}>{cePPI}</span>
+                        {ceStreak >= 2 && <span style={{ fontSize: 9, color: '#475569' }}>{ceStreak}s</span>}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '1px solid #1e293b11' }}>
+                    <span style={{ color: ceDrv.color, fontWeight: 700, fontSize: 11 }}>{ceDrv.label}</span>
+                    <span style={{ marginLeft: 4, color: ceDirColor, fontWeight: 700, fontSize: 11 }}>{ceDir}</span>
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '1px solid #1e293b11' }}>
+                    <span style={{ color: ceCumColor, fontFamily: 'monospace', fontSize: 11, fontWeight: ceCumOI !== null && Math.abs(ceCumOI) > 8000 ? 700 : 400 }}>
+                      {ceCumOI !== null ? fmtOI(ceCumOI) : '—'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '2px solid #1e293b' }}>
+                    {isATM ? <span style={{ color: '#334155', fontFamily: 'monospace', fontSize: 11 }}>—</span> : (
+                      <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                        <span style={{ color: '#94a3b8' }}>{ceNormIV.toFixed(2)}</span>
+                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
+                        <span style={{ color: ceB1Color, fontWeight: ceB1Dev !== null && Math.abs(ceB1Dev) > 5 ? 700 : 400 }}>{fmtDev(ceB1Dev)}</span>
+                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
+                        <span style={{ color: ceB2Color, fontWeight: ceB2Dev !== null && Math.abs(ceB2Dev) > 5 ? 700 : 400 }}>{fmtDev(ceB2Dev)}</span>
+                      </span>
+                    )}
+                  </td>
+
+                  {/* ── STRIKE centre ── */}
+                  <td style={{ padding: '9px 14px', textAlign: 'center', background: isATM ? 'rgba(96,165,250,0.1)' : '#0a1020', borderLeft: '2px solid #1e293b', borderRight: '2px solid #1e293b' }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: isATM ? '#60a5fa' : '#f1f5f9' }}>
+                      {row.strike.toLocaleString()}
+                    </span>
+                    {isATM && <span style={{ display: 'block', fontSize: 9, color: '#60a5fa', fontWeight: 700, letterSpacing: '0.06em' }}>ATM</span>}
+                  </td>
+
+                  {/* ── PE side (left-to-right: normIV·b1·b2 | cumOI | driver | ppi | state) ── */}
+                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
+                    {isATM ? <span style={{ color: '#334155', fontFamily: 'monospace', fontSize: 11 }}>—</span> : (
+                      <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                        <span style={{ color: '#94a3b8' }}>{peNormIV.toFixed(2)}</span>
+                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
+                        <span style={{ color: peB1Color, fontWeight: peB1Dev !== null && Math.abs(peB1Dev) > 5 ? 700 : 400 }}>{fmtDev(peB1Dev)}</span>
+                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
+                        <span style={{ color: peB2Color, fontWeight: peB2Dev !== null && Math.abs(peB2Dev) > 5 ? 700 : 400 }}>{fmtDev(peB2Dev)}</span>
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
+                    <span style={{ color: peCumColor, fontFamily: 'monospace', fontSize: 11, fontWeight: peCumOI !== null && Math.abs(peCumOI) > 8000 ? 700 : 400 }}>
+                      {peCumOI !== null ? fmtOI(peCumOI) : '—'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
+                    <span style={{ color: peDirColor, fontWeight: 700, fontSize: 11 }}>{peDir}</span>
+                    <span style={{ marginLeft: 4, color: peDrv.color, fontWeight: 700, fontSize: 11 }}>{peDrv.label}</span>
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
+                    {isATM ? <span style={{ color: '#334155' }}>—</span> : (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ color: pePPIColor, fontWeight: 700, fontSize: 11, minWidth: 22 }}>{pePPI}</span>
+                        {peStreak >= 2 && <span style={{ fontSize: 9, color: '#475569' }}>{peStreak}s</span>}
+                        <div style={{ width: 36, height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ width: pePPI + '%', height: '100%', background: pePPIColor, borderRadius: 2, transition: 'width 0.5s' }} />
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ padding: '9px 10px', textAlign: 'right', borderLeft: '1px solid #1e293b11' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: peStateColor, whiteSpace: 'nowrap' }}>{peStateLabel}</span>
+                  </td>
+
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* PPI Scale legend */}
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #1e293b', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        {[
+          { range: 'PPI 0–39',  label: '⚪ No Signal',       color: '#475569', desc: 'Equilibrium — no meaningful positioning' },
+          { range: 'PPI 40–69', label: '🟡 Early Warning',   color: '#f59e0b', desc: 'Anomaly building — not yet confirmed' },
+          { range: 'PPI 70–100',label: '🟢/🔴 High Conviction', color: '#4ade80', desc: 'Both baselines breached + OI confirmed + sustained' },
+        ].map(function(s) {
+          return (
+            <div key={s.range} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flex: 1, minWidth: 200 }}>
+              <div>
+                <p style={{ fontSize: 10, fontWeight: 700, color: s.color, margin: '0 0 2px' }}>{s.label} <span style={{ color: '#334155', fontWeight: 400 }}>· {s.range}</span></p>
+                <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>{s.desc}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Glossary */}
+      <div style={{ borderTop: '1px solid #1e293b', padding: '12px 20px' }}>
+        <p style={{ fontSize: 10, fontWeight: 700, color: '#475569', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Glossary — tap any term to expand
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+          {glossary.map(function(item, i) {
+            var isOpen = openGloss === i;
+            return (
+              <div
+                key={i}
+                onClick={function() { setOpenGloss(isOpen ? null : i); }}
+                style={{ background: isOpen ? 'rgba(96,165,250,0.05)' : '#0f172a', border: '1px solid ' + (isOpen ? '#334155' : '#1e293b'), borderRadius: 8, padding: '8px 12px', cursor: 'pointer', transition: 'all 0.15s' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: isOpen ? '#60a5fa' : '#94a3b8', fontFamily: 'monospace' }}>{item.term}</span>
+                    <span style={{ fontSize: 10, color: '#334155', marginLeft: 8 }}>{item.full}</span>
+                  </div>
+                  <span style={{ color: '#334155', fontSize: 11, marginLeft: 8 }}>{isOpen ? '−' : '+'}</span>
+                </div>
+                {isOpen && (
+                  <p style={{ fontSize: 11, color: '#64748b', margin: '8px 0 0', lineHeight: 1.6, borderTop: '1px solid #1e293b', paddingTop: 8 }}>
+                    {item.desc}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p style={{ fontSize: 10, color: '#334155', margin: '12px 0 0', lineHeight: 1.6 }}>
+          ⚠ PPI is an anomaly detector, not a prediction engine. High PPI = observable positioning pressure consistent with institutional-scale activity. Combine with price context, key levels, and news before acting. IV + OI cannot confirm buyer vs writer without direct order flow data.
+        </p>
+      </div>
+
+    </div>
+  );
+}
+
+// ─── End OTMPositioning ──────────────────────────────────────────────────────
 
 function TopStrikesSection(props) {
   var data = props.data || {};
@@ -2349,6 +2915,157 @@ function PreTradeModal(props) {
 }
 
 
+
+// ── Intraday Trend Table (from /api/futures-dashboard) ───────────────────────
+
+function fmtTime(t) {
+  if (!t) return '—';
+  var s = String(t).padStart(4, '0');
+  return s.slice(0, 2) + ':' + s.slice(2);
+}
+
+function vwapSigCol(sig) {
+  if (sig === 'BUY')  return '#4ade80';
+  if (sig === 'SELL') return '#f87171';
+  return '#f59e0b';
+}
+
+function IntradayTable(props) {
+  var history = props.history || [];
+
+  if (history.length === 0) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
+                    padding: '40px', textAlign: 'center', color: '#475569', fontSize: 13 }}>
+        <p style={{ margin: '0 0 8px', fontSize: 15 }}>No intraday data yet</p>
+        <p style={{ margin: 0, fontSize: 12, color: '#334155' }}>
+          Snapshots are saved every 3 minutes. Check back after the next options refresh.
+        </p>
+      </div>
+    );
+  }
+
+  function fmtN(n) {
+    if (!n && n !== 0) return '—';
+    var sign = n < 0 ? '-' : '';
+    var abs  = Math.abs(n);
+    if (abs >= 10000000) return sign + (abs / 10000000).toFixed(2) + 'Cr';
+    if (abs >= 100000)   return sign + (abs / 100000).toFixed(1) + 'L';
+    if (abs >= 1000)     return sign + (abs / 1000).toFixed(0) + 'K';
+    return String(n);
+  }
+
+  function fmtDiffN(n) {
+    if (!n && n !== 0) return '—';
+    var abs = Math.abs(n);
+    if (abs >= 10000000) return (n > 0 ? '+' : '') + (n / 10000000).toFixed(2) + 'Cr';
+    if (abs >= 100000)   return (n > 0 ? '+' : '') + (n / 100000).toFixed(1) + 'L';
+    if (abs >= 1000)     return (n > 0 ? '+' : '') + (n / 1000).toFixed(0) + 'K';
+    return (n > 0 ? '+' : '') + n;
+  }
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: 0,
+                       textTransform: 'uppercase', letterSpacing: '0.05em' }}>Intraday Trend</p>
+          <p style={{ fontSize: 11, color: '#475569', margin: '2px 0 0' }}>
+            {history.length} readings · newest first · every 3 min
+          </p>
+        </div>
+        <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>USE DATA AFTER 10:30 AM</span>
+      </div>
+
+      <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+            <tr style={{ background: '#162032' }}>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'left',   fontWeight: 700 }}>Time</th>
+              <th style={{ padding: '8px 14px', color: '#f87171', textAlign: 'right',  fontWeight: 600 }}>Call Vol</th>
+              <th style={{ padding: '8px 14px', color: '#4ade80', textAlign: 'right',  fontWeight: 600 }}>Put Vol</th>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'right',  fontWeight: 600 }}>
+                Diff
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Put − Call</span>
+              </th>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>PCR</th>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>
+                PCR (COI)
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Full Chain</span>
+              </th>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600,
+                           borderLeft: '1px solid #334155' }}>Option Signal</th>
+              <th style={{ padding: '8px 14px', color: '#60a5fa', textAlign: 'right',  fontWeight: 600,
+                           borderLeft: '1px solid #334155' }}>VWAP</th>
+              <th style={{ padding: '8px 14px', color: '#60a5fa', textAlign: 'right',  fontWeight: 600 }}>Price</th>
+              <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>VWAP Signal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map(function(snap, i) {
+              var isFirst    = i === 0;
+              var prev       = history[i + 1];
+              var diffVal    = snap.diff || 0;
+              var pcrUp      = prev && snap.pcr > prev.pcr;
+              var pcrDown    = prev && snap.pcr < prev.pcr;
+              var pcrArrow   = pcrUp ? ' ↑' : pcrDown ? ' ↓' : '';
+              var pcrCol     = snap.pcr > 1.2 ? '#4ade80' : snap.pcr < 0.8 ? '#f87171' : '#f59e0b';
+              var coiPcr     = snap.pcr_coi || 0;
+              var coiPcrCol  = coiPcr > 1.2 ? '#4ade80' : coiPcr > 0 && coiPcr < 0.8 ? '#f87171' : '#f59e0b';
+              var coiPcrUp   = prev && coiPcr > (prev.pcr_coi || 0);
+              var coiPcrDown = prev && coiPcr < (prev.pcr_coi || 0);
+              var coiArrow   = coiPcrUp ? ' ↑' : coiPcrDown ? ' ↓' : '';
+              var diffCol    = diffVal > 0 ? '#4ade80' : diffVal < 0 ? '#f87171' : '#64748b';
+              var priceCol   = snap.price > snap.vwap ? '#4ade80' : snap.price < snap.vwap ? '#f87171' : '#f1f5f9';
+              return (
+                <tr key={i} style={{
+                  background:   isFirst ? 'rgba(96,165,250,0.07)' : 'transparent',
+                  borderBottom: '1px solid #1e293b22',
+                  opacity:      isFirst ? 1 : Math.max(0.45, 1 - i * 0.025),
+                }}>
+                  <td style={{ padding: '9px 14px', fontWeight: isFirst ? 700 : 500,
+                               color: isFirst ? '#f1f5f9' : '#94a3b8', whiteSpace: 'nowrap' }}>
+                    {fmtTime(snap.time)}
+                    {isFirst && <span style={{ display: 'block', fontSize: 8, color: '#4ade80', fontWeight: 700 }}>LATEST</span>}
+                  </td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#f87171', fontWeight: 600 }}>{fmtN(snap.call_vol)}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#4ade80', fontWeight: 600 }}>{fmtN(snap.put_vol)}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: diffCol, fontWeight: 700 }}>{fmtDiffN(diffVal)}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'center', color: pcrCol, fontWeight: 700 }}>
+                    {snap.pcr}
+                    <span style={{ fontSize: 10, color: pcrUp ? '#4ade80' : pcrDown ? '#f87171' : '#64748b' }}>{pcrArrow}</span>
+                  </td>
+                  <td style={{ padding: '9px 14px', textAlign: 'center', color: coiPcrCol, fontWeight: 700 }}>
+                    {coiPcr > 0 ? coiPcr.toFixed(2) : '—'}
+                    <span style={{ fontSize: 10, color: coiPcrUp ? '#4ade80' : coiPcrDown ? '#f87171' : '#64748b' }}>{coiArrow}</span>
+                  </td>
+                  <td style={{ padding: '9px 14px', textAlign: 'center', borderLeft: '1px solid #1e293b' }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: vwapSigCol(snap.opt_signal) }}>{snap.opt_signal}</span>
+                  </td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#60a5fa', fontWeight: 600,
+                               borderLeft: '1px solid #1e293b' }}>{snap.vwap || '—'}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: priceCol, fontWeight: 700 }}>{snap.price || '—'}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'center' }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: vwapSigCol(snap.vwap_signal) }}>{snap.vwap_signal}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ padding: '8px 16px', borderTop: '1px solid #1e293b', fontSize: 10, color: '#334155' }}>
+        Option Signal: BUY if Put vol &gt; Call vol + PCR &gt;1.2 · SELL if Call vol &gt; Put vol + PCR &lt;0.8 ·
+        VWAP Signal: BUY if Futures LTP &gt; VWAP · SELL if below · VWAP = (H+L+C)/3
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── OI Zone Analysis (ATM ±7 = 15 strikes) ──────────────────────────────────
 function ZoneSplit(props) {
   var chain  = props.chain  || [];
@@ -2575,6 +3292,27 @@ function StrikeMonitor(props) {
       if (!stateMap[k] || a.ts > stateMap[k].ts) stateMap[k] = a;
     });
 
+  // Build relative COI/OI ratios across ALL active strikes for both sides
+  // so confidence% is ranked relative to peers, not a fixed threshold
+  var relRatios = [];
+  active.forEach(function(r) {
+    ['ce','pe'].forEach(function(side) {
+      var oi  = side==='ce' ? (r.ce_oi||0)      : (r.pe_oi||0);
+      var coi = side==='ce' ? (r.ce_chg_oi||0)  : (r.pe_chg_oi||0);
+      if (oi >= MIN_OI) relRatios.push(Math.abs(coi) / oi);
+    });
+  });
+  relRatios.sort(function(a,b){return a-b;});
+
+  function relPct(absRatio) {
+    // Percentile rank of this ratio vs all active strikes right now
+    if (!relRatios.length) return null;
+    var below = relRatios.filter(function(v){return v < absRatio;}).length;
+    var pct   = Math.round((below / relRatios.length) * 100);
+    // Always show — min 40% so even lower-ranked strikes display a number
+    return Math.max(40, pct);
+  }
+
   function getSignal(row, side) {
     var coi = side==='ce' ? (row.ce_chg_oi||0) : (row.pe_chg_oi||0);
     var oi  = side==='ce' ? (row.ce_oi||0)     : (row.pe_oi||0);
@@ -2589,11 +3327,14 @@ function StrikeMonitor(props) {
       sigBg    = sigCol + '18';
     } else {
       var rel = oi > 0 ? Math.abs(coi)/oi : 0;
-      if (rel < 0.01)   { sigLabel='—';         sigCol='#334155'; sigBg='transparent'; }
-      else if (coi > 0) { sigLabel='WRITING ↑'; sigCol=side==='ce'?'#f87171':'#4ade80'; sigBg='transparent'; }
-      else              { sigLabel='UNWIND ↓';  sigCol=side==='ce'?'#4ade80':'#f87171'; sigBg='transparent'; }
+      if (rel < 0.005) { sigLabel='—';         sigCol='#334155'; sigBg='transparent'; }
+      else if (coi > 0){ sigLabel='WRITING ↑'; sigCol=side==='ce'?'#f87171':'#4ade80'; sigBg='transparent'; }
+      else             { sigLabel='UNWIND ↓';  sigCol=side==='ce'?'#4ade80':'#f87171'; sigBg='transparent'; }
     }
-    return { label:sigLabel, col:sigCol, bg:sigBg, pct:st?st.pct:null, coi:coi, oi:oi };
+    // Relative confidence — rank this strike vs all active strikes right now
+    var ratio    = oi > 0 ? Math.abs(coi) / oi : 0;
+    var pctVal   = st ? st.pct : (sigLabel !== '—' ? relPct(ratio) : null);
+    return { label:sigLabel, col:sigCol, bg:sigBg, pct:pctVal, coi:coi, oi:oi };
   }
 
   var wrapper = inline
@@ -2712,12 +3453,12 @@ function AlertSystem(props) {
   var stateRef       = React.useRef({});
 
   var MIN_OI      = 50000;
-  var MIN_SAMPLES = 8;
-  var ALERT_PCT   = 82;
+  var MIN_SAMPLES = 5;  // 5 samples = 15 min before percentile fully calibrated
+  var ALERT_PCT   = 75;
   var HIGH_PCT    = 92;
 
   function pctRank(dist, val) {
-    if (!dist || dist.length < MIN_SAMPLES) return 0;
+    if (!dist || dist.length < 2) return 0;  // just need 2 points for a comparison
     var a = Math.abs(val);
     return Math.round(dist.filter(function(v){return v<a;}).length / dist.length * 100);
   }
@@ -2742,9 +3483,9 @@ function AlertSystem(props) {
   }
 
   function computeStateChange(histArr, atm, spot, sym, fired) {
-    if (histArr.length < 4) return;
+    if (histArr.length < 2) return;
     var latest = histArr[histArr.length-1].chain;
-    var past3  = histArr[histArr.length-4].chain;
+    var past3  = histArr.length>=4  ? histArr[histArr.length-4].chain  : histArr[0].chain;
     var past10 = histArr.length>=11 ? histArr[histArr.length-11].chain : null;
     var open   = histArr[0].chain;
     function toMap(ch){var m={};ch.forEach(function(r){m[r.strike]=r;});return m;}
@@ -2773,7 +3514,7 @@ function AlertSystem(props) {
         var d10 =p10r ?nowCOI-(side==='ce'?(p10r.ce_chg_oi||0):(p10r.pe_chg_oi||0)):0;
         var dOpen=openR?nowCOI-(side==='ce'?(openR.ce_chg_oi||0):(openR.pe_chg_oi||0)):0;
         var primaryDelta=p10r?d10:d3;
-        var floor=Math.max(50000,nowOI*0.02);
+        var floor=Math.max(10000,nowOI*0.01);  // 1% of OI, min 10K
         var stk=sym+'|'+strike+'|'+side;
 
         if (Math.abs(primaryDelta)<floor) {
@@ -2824,11 +3565,14 @@ function AlertSystem(props) {
     computeStateChange(chainHistRef.current,   atmNifty, spotNifty, 'NIFTY',     fired);
     computeStateChange(chainHistBNRef.current, atmBN,    spotBN,    'BANKNIFTY', fired);
     if (fired.length) {
+      console.log('[Alerts] fired:', fired.length, fired.map(function(a){return a.type+'('+a.pct+'%)';}).join(', '));
       onAlerts&&onAlerts(fired);
       var best=fired.reduce(function(a,b){return b.pct>a.pct?b:a;},fired[0]);
       setToast(best);
       var t=setTimeout(function(){setToast(null);},10000);
       return function(){clearTimeout(t);};
+    } else {
+      console.log('[Alerts] checked, none fired. hist NIFTY:', chainHistRef.current.length, 'BN:', chainHistBNRef.current.length);
     }
   }, [chain, chainBN]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3063,12 +3807,14 @@ export default function Options() {
       if (!s) return [];
       var parsed = JSON.parse(s);
       return parsed.filter(function(a) {
-        return a.pct && a.pct >= 82 && a.strike && a.side && a.dir;
+        return a.pct && a.pct >= 75 && a.strike && a.side && a.dir;
       });
     } catch(e) { return []; }
   });
 
   var intervalRef                 = useRef(null);
+  var dashIntervalRef             = useRef(null);
+  var [dashData, setDashData]     = useState(null);
 
   useEffect(function() {
     try { localStorage.setItem(_alertKey, JSON.stringify(alerts.slice(0,200))); }
@@ -3112,6 +3858,13 @@ export default function Options() {
       .catch(function(e) { console.error(e); setLoading(false); });
   }
 
+  function fetchDashboard(sym) {
+    fetch('http://localhost:3001/api/futures-dashboard?symbol=' + sym)
+      .then(function(r) { return r.json(); })
+      .then(function(d) { if (d && !d.error) setDashData(d); })
+      .catch(function(e) { console.error('[Options] dashboard fetch:', e); });
+  }
+
   useEffect(function() {
     if (!hasOptions) return;
     fetchOverview();
@@ -3119,51 +3872,41 @@ export default function Options() {
     return function() { clearInterval(overviewRef.current); };
   }, [hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function istMins() {
-    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-    return ist.getUTCDay() * 10000 + ist.getUTCHours() * 60 + ist.getUTCMinutes();
-  }
   function isMarketOpen() {
-    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-    var day = ist.getUTCDay();
+    var now = new Date();
+    // Convert to IST (UTC+5:30)
+    var ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    var day = ist.getUTCDay(); // 0=Sun, 6=Sat
     if (day === 0 || day === 6) return false;
-    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    var h = ist.getUTCHours(), m = ist.getUTCMinutes();
+    var mins = h * 60 + m;
     return mins >= 555 && mins < 930; // 9:15 AM to 3:30 PM IST
-  }
-  function shouldClearData() {
-    // Clear only between 8:00 AM and 9:15 AM IST on weekdays (fresh session start)
-    var ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-    var day = ist.getUTCDay();
-    if (day === 0 || day === 6) return false;
-    var mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-    return mins >= 480 && mins < 555; // 8:00 AM to 9:15 AM
   }
 
   useEffect(function() {
     if (!hasOptions) return;
-    // Clear data only during 8:00-9:15 AM window (fresh session start)
-    if (shouldClearData()) {
-      setData(null);
-      setBnData(null);
-      prevPCRRef.current = {};
-    }
-    // Always fetch on mount — show last available data even after market close
     setLoading(true);
+    setData(null);
+    prevPCRRef.current = {};
     fetchSym(symbol, setData);
     fetchSym('BANKNIFTY', setBnData);
+    fetchDashboard(symbol);
     clearInterval(intervalRef.current);
-    // Only keep polling during market hours
-    if (isMarketOpen()) {
-      intervalRef.current = setInterval(function() {
-        if (!isMarketOpen()) {
-          clearInterval(intervalRef.current);
-          return;
-        }
-        fetchSym(symbol, setData);
-        fetchSym('BANKNIFTY', setBnData);
-      }, 180000);
-    }
-    return function() { clearInterval(intervalRef.current); };
+    clearInterval(dashIntervalRef.current);
+    intervalRef.current = setInterval(function() {
+      if (!isMarketOpen()) {
+        clearInterval(intervalRef.current);
+        clearInterval(dashIntervalRef.current);
+        return;
+      }
+      fetchSym(symbol, setData);
+      fetchSym('BANKNIFTY', setBnData);
+      fetchDashboard(symbol);
+    }, 180000);
+    return function() {
+      clearInterval(intervalRef.current);
+      clearInterval(dashIntervalRef.current);
+    };
   }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!hasOptions) {
@@ -3199,9 +3942,9 @@ export default function Options() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#1e293b', borderRadius: 6, border: '1px solid #334155' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: loading ? '#f59e0b' : isMarketOpen() ? '#4ade80' : '#64748b' }} />
+            <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: isMarketOpen() ? '#4ade80' : '#f59e0b' }} />
             <span style={{ fontSize: 12, color: isMarketOpen() ? '#94a3b8' : '#f59e0b' }}>
-              {isMarketOpen() ? (loading ? 'Loading...' : lastUpdate ? 'Updated ' + lastUpdate : 'Waiting') : shouldClearData() ? 'Clearing for new session...' : lastUpdate ? 'Last updated ' + lastUpdate + ' · market closed' : 'Market closed'}
+              {!isMarketOpen() ? 'Market closed · paused' : lastUpdate ? 'Updated ' + lastUpdate : loading ? 'Loading...' : 'Waiting'}
             </span>
           </div>
           <button
@@ -3303,6 +4046,8 @@ export default function Options() {
             <UnwindAlerts alerts={data.unwind_alerts} />
           )}
 
+          <IntradayTable history={dashData ? (dashData.intraday_history || []) : []} />
+
           <OIBar data={data} />
           <ZoneSplit
             chain={data.chain || []}
@@ -3329,6 +4074,13 @@ export default function Options() {
           />
 
           <IVDashboard history={data.iv_history || []} symbol={symbol} tDays={data.top_strikes ? data.top_strikes.T_days : null} />
+
+          <OTMPositioning
+            chain={data.full_chain || data.chain || []}
+            strikeHistory={data.strike_pcr_history || []}
+            vix={(overview["VIX"] || {}).last || 0}
+            atm={data.atm_strike || 0}
+          />
           {data.top_strikes && <TopStrikesSection data={data} />}
 
 
@@ -3340,6 +4092,7 @@ export default function Options() {
             ceVol={data.top_ce_vol || []}
             peVol={data.top_pe_vol || []}
           />
+
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <ConstituentTable stocks={niftyStocks}     title="NIFTY 50 — Top Weighted"  color="#60a5fa" />

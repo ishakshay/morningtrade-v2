@@ -7,6 +7,62 @@ import { useState, useEffect, useRef } from 'react';
 
 var API = 'http://localhost:3001';
 
+// ─── Smoothing helpers ────────────────────────────────────────────────────────
+
+// Majority-vote signal over last N history entries.
+// Returns { signal, confidence, isShift, isSmoothed }
+function smoothedSignal(history, rawSignal, rawConf) {
+  if (!history || history.length < 2) {
+    return { signal: rawSignal, confidence: rawConf, isShift: false, isSmoothed: false };
+  }
+
+  var recent = history.slice(-3);    // last 3 ticks — voting window
+  var prev   = history.slice(-6, -3); // prior 3 ticks — for shift detection
+
+  // ── Majority vote ──
+  var counts = {};
+  recent.forEach(function(h) {
+    var s = h.signal || 'Neutral';
+    counts[s] = (counts[s] || 0) + 1;
+  });
+  var winner = null, winCount = 0;
+  Object.keys(counts).forEach(function(s) {
+    if (counts[s] > winCount) { winner = s; winCount = counts[s]; }
+  });
+  // Require at least 2/3 agreement, otherwise fall back to Neutral
+  var votedSignal = (winCount >= 2) ? winner : 'Neutral';
+
+  // ── EMA confidence (α=0.4 over last 5 readings) ──
+  var confVals = history.slice(-5).map(function(h) { return h.confidence || 0; });
+  var alpha = 0.4;
+  var ema = confVals[0];
+  for (var i = 1; i < confVals.length; i++) {
+    ema = alpha * confVals[i] + (1 - alpha) * ema;
+  }
+  var smoothConf = Math.round(ema);
+
+  // ── Shift detection: 3 consecutive same signal, different from prior 3 ──
+  var allSame = recent.every(function(h) { return h.signal === recent[0].signal; });
+  var prevSignal = prev.length > 0 ? prev[prev.length - 1].signal : null;
+  var isShift = allSame && prevSignal && prevSignal !== recent[0].signal;
+
+  // If genuine shift, show immediately at raw confidence
+  if (isShift) {
+    return { signal: votedSignal, confidence: rawConf, isShift: true, isSmoothed: false };
+  }
+
+  return { signal: votedSignal, confidence: smoothConf, isShift: false, isSmoothed: votedSignal !== rawSignal };
+}
+
+var SIGNAL_COLOR = {
+  'Long Buildup':   '#4ade80',
+  'Short Covering': '#60a5fa',
+  'Short Buildup':  '#f87171',
+  'Long Unwinding': '#f59e0b',
+  'Absorption':     '#a78bfa',
+  'Neutral':        '#64748b',
+};
+
 // ─── Mini signal sparkline ─────────────────────────────────────────────────
 
 function SignalSparkline(props) {
@@ -226,12 +282,23 @@ export default function FuturesSentiment(props) {
     );
   }
 
-  var signalColor = data.signal_color || '#64748b';
+  // ── Apply smoothing ──
+  var smooth      = smoothedSignal(data.history || [], data.signal, data.confidence);
+  var displaySig  = smooth.signal;
+  var displayConf = smooth.confidence;
+  var signalColor = SIGNAL_COLOR[displaySig] || data.signal_color || '#64748b';
   var trendColor  = data.trend_color  || '#64748b';
   var basisColor  = data.basis >= 0 ? '#60a5fa' : '#f59e0b';
   var basisIntel  = data.basis_intel  || {};
   var options     = data.options      || {};
   var trend       = data.trend        || {};
+  // Override options implication if smoothed signal differs from raw
+  var displayEmoji = smooth.signal === 'Long Buildup' ? '🟢'
+    : smooth.signal === 'Short Buildup'  ? '🔴'
+    : smooth.signal === 'Short Covering' ? '🔵'
+    : smooth.signal === 'Long Unwinding' ? '🟠'
+    : smooth.signal === 'Absorption'     ? '🟣'
+    : '⚪';
 
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b',
@@ -248,8 +315,19 @@ export default function FuturesSentiment(props) {
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 22, fontWeight: 800, color: signalColor }}>
-              {data.signal_emoji} {data.signal}
+              {displayEmoji} {displaySig}
             </span>
+            {smooth.isShift && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                             background: '#f59e0b22', border: '1px solid #f59e0b44', color: '#f59e0b' }}>
+                🔄 SHIFT
+              </span>
+            )}
+            {smooth.isSmoothed && !smooth.isShift && (
+              <span style={{ fontSize: 9, color: '#334155', marginLeft: 2 }}>
+                smoothed · raw: {data.signal}
+              </span>
+            )}
           </div>
         </div>
 
@@ -264,8 +342,9 @@ export default function FuturesSentiment(props) {
         <p style={{ fontSize: 10, color: '#475569', margin: '0 0 4px', fontWeight: 600,
                     textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           Confidence
+          {smooth.isSmoothed && <span style={{ fontSize: 9, color: '#334155', marginLeft: 6, fontWeight: 400 }}>(EMA · raw: {data.confidence})</span>}
         </p>
-        <ConfidenceBar score={data.confidence} />
+        <ConfidenceBar score={displayConf} />
       </div>
 
       {/* ── Key metrics row ── */}
