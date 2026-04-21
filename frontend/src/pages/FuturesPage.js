@@ -616,8 +616,9 @@ function BasisTracker(props) {
            : diff < -20  ? 'Below normal — institutional selling / hedging'
            : 'Normal range — cost of carry';
 
-  var trend = history.slice(0, 8).map(function(s) {
-    return (s.price && spot) ? Math.round((s.price - spot) * 10) / 10 : null;
+  var trend = history.slice(-8).reverse().map(function(s) {
+    var p = s.price || s.ltp || 0;
+    return (p && spot) ? Math.round((p - spot) * 10) / 10 : null;
   }).filter(function(v) { return v !== null; });
 
   var tDir = trend.length >= 2
@@ -887,10 +888,10 @@ export default function FuturesPage() {
         {/* ── 1. Basis tracker — fed by sentiment API ── */}
         {sentData && (
           <BasisTracker
-            futures={{}}
-            spot={sentData ? sentData.spot_ltp : 0}
-            tDays={7}
-            history={[]}
+            futures={{ fut_ltp: sentData.ltp || 0 }}
+            spot={sentData.spot_ltp || 0}
+            tDays={sentData.t_days || 7}
+            history={sentData.history || []}
             basisIntelNotes={basisIntelNotes}
           />
         )}

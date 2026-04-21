@@ -133,13 +133,15 @@ def save_pcr_intraday(symbol, pcr, ce_coi, pe_coi):
         bucket = _pcr_intraday[symbol]
     diff   = pe_coi - ce_coi
     signal = 'BUY' if pcr > 1.2 else 'SELL' if pcr < 0.8 else 'NEUTRAL'
+    pcr_coi_val = round(pe_coi / ce_coi, 2) if ce_coi != 0 else (99.0 if pe_coi > 0 else 0)
     bucket['snapshots'].append({
-        'time':   datetime.now().strftime('%H:%M'),
-        'pcr':    round(pcr, 2),
-        'diff':   diff,
-        'ce_coi': ce_coi,
-        'pe_coi': pe_coi,
-        'signal': signal,
+        'time':    datetime.now().strftime('%H:%M'),
+        'pcr':     round(pcr, 2),
+        'pcr_coi': pcr_coi_val,
+        'diff':    diff,
+        'ce_coi':  ce_coi,
+        'pe_coi':  pe_coi,
+        'signal':  signal,
     })
     if len(bucket['snapshots']) > 200:
         bucket['snapshots'] = bucket['snapshots'][-200:]

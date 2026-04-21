@@ -280,6 +280,8 @@ def sanitize(obj):
     if isinstance(obj, list):
         return [sanitize(i) for i in obj]
     return obj
+from screeners.mtf_scanner_route import register_scanner_routes
+register_scanner_routes(app, sanitize)
 
 def safe_json(data):
     return json.dumps(sanitize(data))

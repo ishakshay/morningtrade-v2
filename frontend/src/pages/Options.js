@@ -1476,6 +1476,596 @@ function VolumeLeaders(props) {
 
 // ─── OTM Positioning Intelligence ───────────────────────────────────────────
 
+
+// ─── Nifty/BankNifty Candlestick + COI PCR Histogram ─────────────────────────
+// history = intraday_history (newest first) from /api/futures-dashboard
+// Each snap: {time, open, high, low, close, price, vwap, pcr_coi, pcr, diff}
+// Top panel:    candlestick chart + VWAP line
+// Bottom panel: COI PCR as histogram (green above 1.0, red below)
+function PCRChart(props) {
+  var candles    = props.candles    || [];  // [{time,open,high,low,close}] from NSE/yfinance
+  var pcrHistory = props.pcrHistory || [];  // [{time,pcr_coi,pcr}] from pcr_intraday_3m
+  var dashHist   = props.dashHist   || [];  // [{time,vwap,fut_vol}] from intraday_history (optional)
+  var symbol     = props.symbol     || 'NIFTY';
+
+  var [hover, setHover] = React.useState(null);
+  var svgRef = React.useRef(null);
+
+  // Merge candles with PCR data by time key
+  // candles = chronological OHLC from NSE/yf  e.g. time="0915" or "09:15"
+  // pcrHistory = newest-first intraday snapshots time="0915"
+  var snaps = React.useMemo(function() {
+    // Normalise time to HHMM 4-digit string, stripping colons
+    function normTime(t) {
+      var s = String(t || '').replace(':', '');
+      return s.padStart(4, '0');
+    }
+    // Also build a minutes-since-midnight lookup for fuzzy matching
+    function toMins(t) {
+      var s = normTime(t);
+      return parseInt(s.slice(0,2), 10) * 60 + parseInt(s.slice(2), 10);
+    }
+
+    var pcrByTime = {};
+    var pcrByMins = {};
+    // Primary: pcr_intraday_3m has pcr_coi per snapshot
+    pcrHistory.slice().reverse().forEach(function(s) {
+      var t = normTime(s.time);
+      var m = toMins(t);
+      pcrByTime[t] = s;
+      pcrByMins[m] = s;
+    });
+    // Secondary: dashHist for vwap + fut_vol
+    var dashByTime = {}, dashByMins = {};
+    dashHist.slice().reverse().forEach(function(s) {
+      var t = normTime(s.time);
+      var m = toMins(t);
+      dashByTime[t] = s;
+      dashByMins[m] = s;
+    });
+
+    // Debug: log first few times from each source
+    if (candles.length > 0 && pcrHistory.length > 0) {
+      var cSample = candles.slice(0,3).map(function(c){ return normTime(c.time); });
+      var pSample = pcrHistory.slice(-3).map(function(s){ return normTime(s.time); });
+      console.log('[PCRChart] candle times:', cSample, 'pcr times:', pSample);
+    }
+
+    if (candles.length >= 3) {
+      return candles.filter(function(c) { return c.close > 0; }).map(function(c) {
+        var t   = normTime(c.time);
+        var m   = toMins(t);
+        // Exact match first, then ±3 min fuzzy match
+        var pcr  = pcrByTime[t]  || pcrByMins[m]  || pcrByMins[m+1]  || pcrByMins[m-1]
+                               || pcrByMins[m+2]  || pcrByMins[m-2]
+                               || pcrByMins[m+3]  || pcrByMins[m-3]  || {};
+        var dash = dashByTime[t] || dashByMins[m] || dashByMins[m+1] || dashByMins[m-1]
+                                 || dashByMins[m+2] || dashByMins[m-2]
+                                 || dashByMins[m+3] || dashByMins[m-3] || {};
+        return Object.assign({}, c, {
+          pcr_coi:  pcr.pcr_coi  || 0,
+          pcr:      pcr.pcr      || 0,
+          vwap:     dash.vwap    || pcr.vwap  || c.vwap || 0,
+          price:    c.close,
+          call_vol: pcr.call_vol || 0,
+          put_vol:  pcr.put_vol  || 0,
+          diff:     pcr.diff     || 0,
+          fut_vol:  dash.fut_vol || 0,
+        });
+      });
+    }
+
+    // Fallback: use pcrHistory even without price data
+    // pcr_intraday_3m has no price field — use 0, chart will hide candle panel
+    var pcrSnaps = pcrHistory.slice().reverse();
+    if (pcrSnaps.length > 0) return pcrSnaps;
+
+    // Last resort: try dashHist
+    return dashHist.slice().reverse().filter(function(s) {
+      return s.price > 0 || s.close > 0;
+    });
+  }, [candles, pcrHistory, dashHist]);
+
+  var n = snaps.length;
+
+  // ── Determine if we have real price data ──────────────────────────────────
+  var _allH = snaps.map(function(s){ return s.high || s.close || s.price || 0; }).filter(Boolean);
+  var _allL = snaps.map(function(s){ return s.low  || s.close || s.price || 0; }).filter(Boolean);
+  var hasPriceData = _allH.length >= 3 && Math.max.apply(null, _allH) !== Math.min.apply(null, _allL);
+
+  // ── Layout ────────────────────────────────────────────────────────────────
+  var W    = 880;
+  var Hc   = hasPriceData ? 240 : 0;   // hide candle panel if no price
+  var Hh   = hasPriceData ? 80 : 220;  // expand PCR panel when no candles
+  var Hv   = hasPriceData ? 70 : 0;    // hide volume panel if no price
+  var Hgap = 10;           // gap between panels
+  var padL = 12, padR = 68, padT = 18, padB = 32;
+  var cW   = W - padL - padR;
+  // Candle panel
+  var cTop = padT;
+  var cBot = padT + Hc;
+  // COI PCR histogram panel
+  var hTop = cBot + Hgap;
+  var hBot = hTop + Hh;
+  // Volume panel
+  var vTop = hBot + Hgap;
+  var vBot = vTop + Hv;
+  // Total SVG height
+  var svgH = vBot + padB;
+
+  // ── Candle data ───────────────────────────────────────────────────────────
+  function close(s) { return s.close || s.price || 0; }
+  function open_(s) { return s.open  || close(s); }
+  function high(s)  { return s.high  || close(s); }
+  function low(s)   { return s.low   || close(s); }
+
+  var allHigh = snaps.map(high).filter(Boolean);
+  var allLow  = snaps.map(low).filter(Boolean);
+  var pMax    = allHigh.length ? Math.max.apply(null, allHigh) : 0;
+  var pMin    = allLow.length  ? Math.min.apply(null, allLow)  : 0;
+  var pPad    = (pMax - pMin) * 0.1 || 10;
+  pMax += pPad; pMin -= pPad;
+  var pRange  = pMax - pMin || 1;
+
+  function xOf(i)  { return padL + (i / Math.max(n - 1, 1)) * cW; }
+  function pY(v)   { return cBot - ((v - pMin) / pRange) * (cBot - cTop); }
+
+  // Candle bar width
+  var barW = Math.max(4, Math.min(14, cW / Math.max(n, 1) * 0.75));
+
+  // ── Futures volume series ─────────────────────────────────────────────────
+  var futVols = snaps.map(function(s) { return s.fut_vol || 0; });
+  var maxVol  = Math.max.apply(null, futVols.filter(Boolean)) || 1;
+  function vY(v) { return vBot - (v / maxVol) * Hv; }
+
+  // ── VWAP line ─────────────────────────────────────────────────────────────
+  var vwapPoints = snaps.map(function(s, i) {
+    var v = s.vwap || 0;
+    return v > 0 ? (xOf(i).toFixed(1) + ',' + pY(v).toFixed(1)) : null;
+  }).filter(Boolean).join(' ');
+
+  // ── COI PCR histogram ─────────────────────────────────────────────────────
+  var coiVals   = snaps.map(function(s) { return s.pcr_coi || 0; });
+  // Hard cap at 3.0 — early session spikes (CE COI near zero) cause 4+ readings
+  // which compress the rest of the chart. Cap display at 3.0, clip in hY().
+  var COI_DISPLAY_MAX = 3.0;
+  var validCOI = coiVals.filter(function(v) { return v > 0 && v <= COI_DISPLAY_MAX; });
+  var hRef     = 1.0;
+
+  var hMin = 0, hMax = 0;
+  if (validCOI.length >= 4) {
+    var sorted  = validCOI.slice().sort(function(a,b){ return a-b; });
+    var median  = sorted[Math.floor(sorted.length * 0.5)];
+    var spread  = Math.max(0.3, sorted[Math.floor(sorted.length * 0.9)] - sorted[Math.floor(sorted.length * 0.1)]);
+    hMin = Math.max(0, Math.min(hRef - 0.2, median - spread * 0.8));
+    hMax = Math.min(COI_DISPLAY_MAX, Math.max(hRef + 0.3, median + spread * 1.2));
+  } else {
+    hMin = 0.5; hMax = 2.5;
+  }
+  // Always show 0.8 and 1.2 reference levels
+  hMin = Math.min(hMin, 0.7);
+  hMax = Math.max(hMax, 1.4);
+  var hRange = hMax - hMin || 1;
+  function hRefY() { return hBot - ((hRef - hMin) / hRange) * Hh; }
+  function hY(v)   {
+    var clipped = Math.max(hMin, Math.min(hMax, v));
+    return hBot - ((clipped - hMin) / hRange) * Hh;
+  }
+
+  // ── Price Y-axis nice ticks ───────────────────────────────────────────────
+  function niceTicks(lo, hi, count) {
+    var r   = hi - lo || 1;
+    var raw = r / count;
+    var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+    var stp = Math.ceil(raw / mag) * mag;
+    var st  = Math.ceil(lo / stp) * stp;
+    var out = [];
+    for (var v = st; v <= hi + stp * 0.01; v = Math.round((v + stp) * 1000) / 1000) {
+      out.push(v);
+      if (out.length > 10) break;
+    }
+    return out;
+  }
+  var pTicks = niceTicks(pMin, pMax, 6);
+
+  // COI PCR right-axis ticks
+  var cTicks = niceTicks(hMin, hMax, 5);
+
+  // ── Time labels ───────────────────────────────────────────────────────────
+  var timeSeries = snaps.map(function(s) {
+    var t = String(s.time || '').padStart(4, '0');
+    return t.length === 4 ? t.slice(0,2) + ':' + t.slice(2) : String(s.time || '');
+  });
+  var xLabels = [];
+  if (n > 0) {
+    var every = Math.max(1, Math.floor(n / 8));
+    for (var ti = 0; ti < n; ti += every) xLabels.push({ i: ti, t: timeSeries[ti] });
+    if (!xLabels.length || xLabels[xLabels.length-1].i !== n-1)
+      xLabels.push({ i: n-1, t: timeSeries[n-1] });
+  }
+
+  // ── Last values ───────────────────────────────────────────────────────────
+  var lastSnap  = snaps[n-1] || {};
+  var lastClose = close(lastSnap);
+  var firstClose= close(snaps[0] || {});
+  var sessionUp = lastClose >= firstClose;
+  var lastCOI   = lastSnap.pcr_coi || 0;
+  var lastVwap  = lastSnap.vwap    || 0;
+  var coiColor  = lastCOI > 1.2 ? '#22c55e' : lastCOI < 0.8 ? '#ef4444' : '#94a3b8';
+
+  // ── Mouse ─────────────────────────────────────────────────────────────────
+  function onMouseMove(e) {
+    if (!svgRef.current || n < 2) return;
+    var rect  = svgRef.current.getBoundingClientRect();
+    var scaleX = W / rect.width;
+    var mx    = (e.clientX - rect.left) * scaleX;
+    var relX  = mx - padL;
+    if (relX < 0 || relX > cW) { setHover(null); return; }
+    var idx = Math.round((relX / cW) * (n - 1));
+    idx = Math.max(0, Math.min(n - 1, idx));
+    setHover({ idx: idx, x: xOf(idx) });
+  }
+
+  var hSnap = hover !== null ? (snaps[hover.idx] || {}) : null;
+  var hC     = hSnap ? close(hSnap) : 0;
+  var hCOI   = hSnap ? (hSnap.pcr_coi || 0) : 0;
+  var hVwap  = hSnap ? (hSnap.vwap    || 0) : 0;
+  var hFutV  = hSnap ? (hSnap.fut_vol  || 0) : 0;
+  var hTime = hover !== null ? (timeSeries[hover.idx] || '') : '';
+  var hX    = hover ? hover.x : 0;
+  // Tooltip
+  var ttW = 160, ttH = 70;
+  var ttX = hX + 14;
+  var ttY = cTop + 8;
+  if (ttX + ttW > W - padR - 4) ttX = hX - ttW - 14;
+
+  if (n < 1) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
+                    padding: '32px', textAlign: 'center', color: '#475569', fontSize: 13 }}>
+        <p style={{ margin: '0 0 6px', fontSize: 15, color: '#64748b' }}>Collecting data…</p>
+        <p style={{ margin: 0, fontSize: 11, color: '#334155' }}>Chart available after ~10 minutes of market open</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
+
+      {/* ── Header ── */}
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid #1e293b',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <p style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>
+            {symbol} · COI Put-Call Ratio
+          </p>
+          <p style={{ fontSize: 10, color: '#475569', margin: '2px 0 0' }}>
+            {hasPriceData
+              ? 'Candlestick · VWAP · COI PCR histogram · 3-min snapshots'
+              : 'COI PCR histogram · price chart loads from NSE · 3-min snapshots'}
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+          {/* Legend */}
+          {[
+            { col: '#22c55e', w: 10, h: 10, label: 'Bullish candle' },
+            { col: '#ef4444', w: 10, h: 10, label: 'Bearish candle' },
+            { col: '#0ea5e9', dash: true, label: 'VWAP' },
+            { col: '#22c55e', w: 10, h: 6,  label: 'Fut Vol ↑' },
+            { col: '#ef4444', w: 10, h: 6,  label: 'Fut Vol ↓' },
+          ].map(function(l, i) {
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                {l.dash
+                  ? <svg width="22" height="10"><line x1="0" y1="5" x2="22" y2="5" stroke={l.col} strokeWidth="1.5" strokeDasharray="4,3"/></svg>
+                  : <div style={{ width: l.w, height: l.h, background: l.col, borderRadius: 2 }} />
+                }
+                <span style={{ fontSize: 10, color: '#64748b' }}>{l.label}</span>
+              </div>
+            );
+          })}
+          <div style={{ width: 1, height: 24, background: '#1e293b' }} />
+          {lastClose > 0 && (
+            <div>
+              <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', textTransform: 'uppercase', fontWeight: 600 }}>LTP</p>
+              <span style={{ fontSize: 14, fontWeight: 800, color: sessionUp ? '#22c55e' : '#ef4444' }}>
+                {lastClose.toLocaleString()}
+              </span>
+            </div>
+          )}
+          {lastCOI > 0 && (
+            <div>
+              <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', textTransform: 'uppercase', fontWeight: 600 }}>COI PCR</p>
+              <span style={{ fontSize: 14, fontWeight: 800, color: coiColor }}>{lastCOI.toFixed(2)}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── SVG ── */}
+      <div style={{ overflowX: 'auto' }}>
+        <svg
+          ref={svgRef}
+          width="100%"
+          viewBox={'0 0 ' + W + ' ' + svgH}
+          style={{ display: 'block', minWidth: 480, cursor: 'crosshair' }}
+          onMouseMove={onMouseMove}
+          onMouseLeave={function() { setHover(null); }}
+        >
+          <defs>
+            <clipPath id="candleClip">
+              <rect x={padL} y={cTop} width={cW} height={Hc} />
+            </clipPath>
+            <clipPath id="histClip">
+              <rect x={padL} y={hTop} width={cW} height={Hh} />
+            </clipPath>
+            <clipPath id="volClip">
+              <rect x={padL} y={vTop} width={cW} height={Hv} />
+            </clipPath>
+          </defs>
+
+          {/* ── Candle panel — only when price data available ── */}
+          {hasPriceData && <rect x={padL} y={cTop} width={cW} height={Hc} fill="#0d1117" />}
+
+          {/* Price grid lines + candles + VWAP — only when price data available */}
+          {hasPriceData && pTicks.map(function(v, i) {
+            var y = pY(v);
+            if (y < cTop || y > cBot) return null;
+            return (
+              <g key={i}>
+                <line x1={padL} y1={y} x2={padL+cW} y2={y}
+                      stroke="#1e293b" strokeWidth="1" />
+                <text x={padL+cW+6} y={y+4} fill="#475569" fontSize="10"
+                      textAnchor="start" fontFamily="monospace">
+                  {v >= 10000 ? Math.round(v).toLocaleString() : v.toFixed(0)}
+                </text>
+              </g>
+            );
+          })}
+
+          {hasPriceData && vwapPoints && (
+            <polyline points={vwapPoints} fill="none" stroke="#0ea5e9"
+                      strokeWidth="1.5" strokeDasharray="5,3" opacity="0.8"
+                      clipPath="url(#candleClip)" />
+          )}
+
+          {/* Candlesticks */}
+          {snaps.map(function(s, i) {
+            var o = open_(s), c = close(s), h_ = high(s), l_ = low(s);
+            if (!c) return null;
+            var isUp    = c >= o;
+            var col     = isUp ? '#22c55e' : '#ef4444';
+            var bodyTop = pY(Math.max(o, c));
+            var bodyBot = pY(Math.min(o, c));
+            var bodyH   = Math.max(3, bodyBot - bodyTop);
+            var wickTop = pY(h_);
+            var wickBot = pY(l_);
+            var x       = xOf(i);
+            return (
+              <g key={i} clipPath="url(#candleClip)">
+                <line x1={x} y1={wickTop} x2={x} y2={wickBot}
+                      stroke={col} strokeWidth="1" opacity="0.9" />
+                <rect x={x - barW/2} y={bodyTop} width={barW} height={bodyH}
+                      fill={isUp ? col : col} stroke={col}
+                      strokeWidth={bodyH < 2 ? 0 : 0.5}
+                      opacity={hover && hover.idx === i ? 1 : 0.9}
+                      rx="0.5" />
+              </g>
+            );
+          })}
+
+          {/* Current price label on right axis */}
+          {lastClose > 0 && (function() {
+            var y   = pY(lastClose);
+            var col = sessionUp ? '#22c55e' : '#ef4444';
+            if (y < cTop || y > cBot) return null;
+            return (
+              <g>
+                <line x1={padL} y1={y} x2={padL+cW} y2={y}
+                      stroke={col} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5" />
+                <rect x={padL+cW+2} y={y-9} width={padR-4} height={18}
+                      fill={col} rx="3" />
+                <text x={padL+cW+6} y={y+4} fill="#fff" fontSize="10"
+                      fontFamily="monospace" fontWeight="700">
+                  {Math.round(lastClose).toLocaleString()}
+                </text>
+              </g>
+            );
+          })()}
+
+          {/* ── Histogram panel background ── */}
+          <rect x={padL} y={hTop} width={cW} height={Hh} fill="#080c12" />
+
+          {/* Histogram zero line */}
+          <line x1={padL} y1={hRefY()} x2={padL+cW} y2={hRefY()}
+                stroke="#334155" strokeWidth="1" />
+          <text x={padL+cW+6} y={hRefY()+4} fill="#475569" fontSize="9"
+                fontFamily="monospace">1.0</text>
+
+          {/* COI PCR line */}
+          {(function() {
+            var pts = snaps.map(function(s, i) {
+              var v = s.pcr_coi || 0;
+              return v > 0 ? (xOf(i).toFixed(1) + ',' + hY(v).toFixed(1)) : null;
+            }).filter(Boolean).join(' ');
+            if (!pts) return null;
+            var lastV   = snaps.map(function(s){ return s.pcr_coi||0; }).filter(Boolean);
+            var lastVal = lastV[lastV.length-1] || 0;
+            var lineCol = lastVal > 1.2 ? '#22c55e' : lastVal < 0.8 ? '#ef4444' : '#f59e0b';
+            // Fill under the line from the 1.0 reference
+            var fillPts = snaps.map(function(s, i) {
+              var v = s.pcr_coi || 0;
+              return v > 0 ? (xOf(i).toFixed(1) + ',' + hY(v).toFixed(1)) : null;
+            }).filter(Boolean);
+            var firstX = fillPts.length ? fillPts[0].split(',')[0] : padL;
+            var lastX  = fillPts.length ? fillPts[fillPts.length-1].split(',')[0] : padL+cW;
+            var refY   = hRefY().toFixed(1);
+            var fillD  = pts + ' ' + lastX + ',' + refY + ' ' + firstX + ',' + refY;
+            return (
+              <g clipPath="url(#histClip)">
+                <polygon points={fillD} fill={lineCol} opacity="0.1" />
+                <polyline points={pts} fill="none" stroke={lineCol}
+                          strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+                {/* Last value dot */}
+                {(function() {
+                  var lastIdx = snaps.length - 1;
+                  while (lastIdx >= 0 && !snaps[lastIdx].pcr_coi) lastIdx--;
+                  if (lastIdx < 0) return null;
+                  return <circle cx={xOf(lastIdx)} cy={hY(snaps[lastIdx].pcr_coi)} r="3.5" fill={lineCol} />;
+                })()}
+                {/* Hover dot */}
+                {hover !== null && snaps[hover.idx] && snaps[hover.idx].pcr_coi > 0 && (
+                  <circle cx={xOf(hover.idx)} cy={hY(snaps[hover.idx].pcr_coi)}
+                          r="4" fill="#fff" stroke={lineCol} strokeWidth="2" />
+                )}
+              </g>
+            );
+          })()}
+
+          {/* COI PCR right-axis ticks */}
+          {cTicks.map(function(v, i) {
+            var y = hY(v);
+            if (y < hTop || y > hBot) return null;
+            return (
+              <text key={i} x={padL+cW+6} y={y+4} fill="#334155" fontSize="9"
+                    fontFamily="monospace">{v.toFixed(1)}</text>
+            );
+          })}
+
+          {/* Current COI label */}
+          {lastCOI > 0 && (function() {
+            var y   = hY(lastCOI);
+            var col = lastCOI > 1.2 ? '#22c55e' : lastCOI < 0.8 ? '#ef4444' : '#94a3b8';
+            if (y < hTop || y > hBot) return null;
+            return (
+              <g>
+                <rect x={padL+cW+2} y={y-9} width={padR-4} height={18}
+                      fill={col} rx="3" />
+                <text x={padL+cW+6} y={y+4} fill="#fff" fontSize="10"
+                      fontFamily="monospace" fontWeight="700">
+                  {lastCOI.toFixed(2)}
+                </text>
+              </g>
+            );
+          })()}
+
+          {/* ── Panel divider: candles / PCR ── */}
+          <line x1={padL} y1={cBot + Hgap/2} x2={padL+cW} y2={cBot + Hgap/2}
+                stroke="#1e293b" strokeWidth="1" />
+
+          {/* ── Volume panel ── */}
+          <rect x={padL} y={vTop} width={cW} height={Hv} fill="#080c12" />
+
+          {/* Volume zero line */}
+          <line x1={padL} y1={vBot} x2={padL+cW} y2={vBot} stroke="#1e293b" strokeWidth="1" />
+
+          {/* Futures volume bars — coloured by candle direction */}
+          {snaps.map(function(s, i) {
+            var fv  = s.fut_vol || 0;
+            if (!fv) return null;
+            var isUp = (s.close || s.price || 0) >= (s.open || s.close || s.price || 0);
+            var col  = isUp ? '#22c55e' : '#ef4444';
+            var x    = xOf(i);
+            var hov  = hover && hover.idx === i;
+            return (
+              <rect key={i} x={x - barW/2} y={vY(fv)} width={barW}
+                    height={Math.max(1, vBot - vY(fv))}
+                    fill={col} opacity={hov ? 1 : 0.65}
+                    clipPath="url(#volClip)" rx="0.5" />
+            );
+          })}
+
+          {/* Volume panel label */}
+          <text x={padL + 6} y={vTop + 14} fill="#475569" fontSize="9"
+                fontFamily="sans-serif" fontWeight="600">
+            FUTURES VOL
+          </text>
+
+          {/* Volume max label on right */}
+          {maxVol > 0 && (
+            <text x={padL+cW+5} y={vTop+12} fill="#334155" fontSize="9" fontFamily="monospace">
+              {maxVol >= 100000 ? (maxVol/100000).toFixed(1)+'L' : maxVol >= 1000 ? (maxVol/1000).toFixed(0)+'K' : maxVol}
+            </text>
+          )}
+
+          {/* Panel divider: PCR / volume ── */}
+          <line x1={padL} y1={hBot + Hgap/2} x2={padL+cW} y2={hBot + Hgap/2}
+                stroke="#1e293b" strokeWidth="1" />
+
+          {/* ── Axis borders ── */}
+          <line x1={padL} y1={cTop}  x2={padL}    y2={cBot}  stroke="#1e293b" strokeWidth="1" />
+          <line x1={padL+cW} y1={cTop}  x2={padL+cW} y2={cBot}  stroke="#1e293b" strokeWidth="1" />
+          <line x1={padL} y1={hTop}  x2={padL}    y2={hBot}  stroke="#1e293b" strokeWidth="1" />
+          <line x1={padL+cW} y1={hTop}  x2={padL+cW} y2={hBot}  stroke="#1e293b" strokeWidth="1" />
+          <line x1={padL} y1={vTop}  x2={padL}    y2={vBot}  stroke="#1e293b" strokeWidth="1" />
+          <line x1={padL+cW} y1={vTop}  x2={padL+cW} y2={vBot}  stroke="#1e293b" strokeWidth="1" />
+
+          {/* ── X-axis time labels — below volume panel ── */}
+          {xLabels.map(function(tl, i) {
+            var x = xOf(tl.i);
+            return (
+              <g key={i}>
+                <line x1={x} y1={vBot} x2={x} y2={vBot+5} stroke="#1e293b" strokeWidth="1" />
+                <text x={x} y={vBot+18} fill="#475569" fontSize="10"
+                      textAnchor="middle" fontFamily="sans-serif">{tl.t}</text>
+              </g>
+            );
+          })}
+
+          {/* ── Crosshair ── */}
+          {hover !== null && (
+            <g>
+              {/* Vertical line across all three panels */}
+              <line x1={hX} y1={cTop}  x2={hX} y2={cBot}
+                    stroke="#60a5fa" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+              <line x1={hX} y1={hTop}  x2={hX} y2={hBot}
+                    stroke="#60a5fa" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+              <line x1={hX} y1={vTop}  x2={hX} y2={vBot}
+                    stroke="#60a5fa" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+              {/* Horizontal price line */}
+              {hC > 0 && pY(hC) >= cTop && pY(hC) <= cBot && (
+                <line x1={padL} y1={pY(hC)} x2={padL+cW} y2={pY(hC)}
+                      stroke="#60a5fa" strokeWidth="1" strokeDasharray="3,3" opacity="0.4" />
+              )}
+              {/* Tooltip */}
+              <rect x={ttX} y={ttY} width={ttW} height={70}
+                    fill="#0f172a" stroke="#334155" strokeWidth="1" rx="6" opacity="0.95" />
+              {/* Time */}
+              <text x={ttX+10} y={ttY+16} fill="#94a3b8" fontSize="11"
+                    fontWeight="600" fontFamily="sans-serif">{hTime}</text>
+              {/* COI PCR */}
+              <text x={ttX+10} y={ttY+36} fill="#64748b" fontSize="11" fontFamily="sans-serif">COI PCR</text>
+              <text x={ttX+ttW-10} y={ttY+36}
+                    fill={hCOI > 1.2 ? '#22c55e' : hCOI < 0.8 ? '#ef4444' : '#94a3b8'}
+                    fontSize="13" fontFamily="monospace" fontWeight="800" textAnchor="end">
+                {hCOI > 0 ? hCOI.toFixed(2) : '—'}
+              </text>
+              {/* Fut Vol */}
+              <text x={ttX+10} y={ttY+56} fill="#64748b" fontSize="11" fontFamily="sans-serif">Fut Vol</text>
+              <text x={ttX+ttW-10} y={ttY+56} fill="#94a3b8"
+                    fontSize="11" fontFamily="monospace" textAnchor="end">
+                {hFutV > 0 ? (hFutV >= 100000 ? (hFutV/100000).toFixed(1)+'L' : hFutV >= 1000 ? (hFutV/1000).toFixed(0)+'K' : String(hFutV)) : '—'}
+              </text>
+            </g>
+          )}
+
+        </svg>
+      </div>
+
+      {/* ── Footer ── */}
+      <div style={{ padding: '8px 20px', borderTop: '1px solid #1e293b',
+                    display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center',
+                    background: '#080c12' }}>
+        <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>COI PCR &gt;1.2 — Put COI dominant · bullish</span>
+        <span style={{ fontSize: 10, color: '#475569' }}>~1.0 neutral</span>
+        <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 600 }}>COI PCR &lt;0.8 — Call COI dominant · bearish</span>
+        <span style={{ fontSize: 10, color: '#334155', marginLeft: 'auto' }}>{n} candles · 3-min</span>
+      </div>
+    </div>
+  );
+}
+
+
 function OTMPositioning(props) {
   var chain          = props.chain          || [];   // full_chain rows — each has strike, is_atm, ce_iv, pe_iv, ce_oi, pe_oi, ce_chg_oi, pe_chg_oi
   var strikeHistory  = props.strikeHistory  || [];   // [{time, strikes:{[strike]:{ce_iv,pe_iv,ce_oi,pe_oi,...}}}]
@@ -1551,15 +2141,82 @@ function OTMPositioning(props) {
     return side === 'ce' ? (e.ce_oi || null) : (e.pe_oi || null);
   }
 
-  // ── PPI score calculation ─────────────────────────────────────────────────
-  // Requires: IV deviation vs B1 (0-20), vs B2 (0-20), cum OI (0-20), OI velocity (0-20), streak (0-20)
-  // We compute streak as consecutive snapshots where normIV > b2NormIV
+  // ── IV direction: tick-to-tick delta (last 2 snapshots) ─────────────────
+  // Used for display arrow only — driver uses B1Dev as primary signal
+  function ivDir(strike, side) {
+    if (strikeHistory.length < 2) return '→';
+    var last2  = strikeHistory.slice(-2);
+    var prev   = last2[0].strikes ? last2[0].strikes[String(strike)] : null;
+    var curr   = last2[1].strikes ? last2[1].strikes[String(strike)] : null;
+    if (!prev || !curr || typeof prev !== 'object' || typeof curr !== 'object') return '→';
+    var prevIV = side === 'ce' ? (prev.ce_iv || 0) : (prev.pe_iv || 0);
+    var currIV = side === 'ce' ? (curr.ce_iv || 0) : (curr.pe_iv || 0);
+    var diff   = currIV - prevIV;
+    if (diff > 1)    return '↑↑';
+    if (diff > 0.2)  return '↑';
+    if (diff < -1)   return '↓↓';
+    if (diff < -0.2) return '↓';
+    return '→';
+  }
+
+  // ── Driver: OI + IV matrix using B1Dev as primary IV signal ──────────────
+  // B1Dev = how far current IV has moved from the 10:00–10:15 session baseline.
+  // This is more reliable than tick-to-tick delta which is noisy at 3-min resolution.
+  // Tick delta used as secondary confirmation when B1Dev is ambiguous.
+  //
+  // IV direction classification (B1Dev primary, tick delta secondary):
+  //   IV UP   = B1Dev > +2%   OR  (B1Dev > 0 AND tick delta > 0.2)
+  //   IV DOWN = B1Dev < -2%   OR  (B1Dev < 0 AND tick delta < -0.2)
+  //   IV FLAT = everything else
+  //
+  // OI direction:
+  //   OI UP   = chgOI > 500  (fresh contracts being added)
+  //   OI DOWN = chgOI < -500 (contracts being removed)
+  //
+  // Matrix:
+  //   BUY    = OI↑ + IV↑  → buyer lifting ask, premium rising
+  //   COVER  = OI↓ + IV↑  → writer forced to exit, IV rising despite OI falling = momentum
+  //   WRITE  = OI↑ + IV↓  → writer selling, premium falling = hostile to buyer
+  //   UNWIND = OI↓ + IV↓  → longs exiting, no interest
+  function driver(row, side) {
+    var iv    = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
+    var b1iv  = getB1IV(row.strike, side);
+    var b1Dev = (b1iv && b1iv > 0) ? ((iv - b1iv) / b1iv) * 100 : 0;
+    var tick  = ivDir(row.strike, side);
+    var tickUp = tick === '↑' || tick === '↑↑';
+    var tickDn = tick === '↓' || tick === '↓↓';
+
+    // IV direction — B1Dev primary
+    var ivUp = b1Dev > 2  || (b1Dev > 0   && tickUp);
+    var ivDn = b1Dev < -2 || (b1Dev < 0   && tickDn);
+
+    var chgOI = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
+    var oiUp  = chgOI > 500;
+    var oiDn  = chgOI < -500;
+
+    if (oiUp && ivUp)  return { label: 'BUY',    color: side === 'ce' ? '#4ade80' : '#f87171', bias: side === 'ce' ? 'bullish' : 'bearish', buyerFriendly: true  };
+    if (oiDn && ivUp)  return { label: 'COVER',  color: '#f59e0b',                             bias: side === 'ce' ? 'bullish' : 'bearish', buyerFriendly: true  };
+    if (oiUp && ivDn)  return { label: 'WRITE',  color: '#64748b',                             bias: 'hostile',                             buyerFriendly: false };
+    if (oiDn && ivDn)  return { label: 'UNWIND', color: '#334155',                             bias: 'hostile',                             buyerFriendly: false };
+    // OI flat but IV has strong session signal — classify by IV alone
+    if (!oiUp && !oiDn && ivUp) return { label: 'IV↑',   color: side === 'ce' ? '#4ade8088' : '#f8717188', bias: side === 'ce' ? 'bullish' : 'bearish', buyerFriendly: true  };
+    if (!oiUp && !oiDn && ivDn) return { label: 'IV↓',   color: '#64748b88',                               bias: 'hostile',                             buyerFriendly: false };
+    return { label: '—', color: '#334155', bias: 'neutral', buyerFriendly: false };
+  }
+
+  function scoreComponent(val, thresholds) {
+    var pts = 0;
+    thresholds.forEach(function(t) { if (val >= t.min) pts = t.pts; });
+    return pts;
+  }
+
+  // ── Streak: consecutive snapshots with IV above B2 baseline ──────────────
   function getStreak(strike, side) {
     if (strikeHistory.length < 2) return 0;
     var count = 0;
-    var snaps = strikeHistory.slice().reverse(); // newest first
+    var snaps = strikeHistory.slice().reverse();
     for (var i = 0; i < snaps.length; i++) {
-      var e = snaps[i].strikes ? snaps[i].strikes[String(strike)] : null;
+      var e  = snaps[i].strikes ? snaps[i].strikes[String(strike)] : null;
       if (!e || typeof e !== 'object') break;
       var iv = side === 'ce' ? (e.ce_iv || 0) : (e.pe_iv || 0);
       var b2 = getB2IV(strike, side);
@@ -1568,13 +2225,16 @@ function OTMPositioning(props) {
     return count;
   }
 
-  function scoreComponent(val, thresholds) {
-    // thresholds: [{min, pts}] sorted ascending
-    var pts = 0;
-    thresholds.forEach(function(t) { if (val >= t.min) pts = t.pts; });
-    return pts;
-  }
-
+  // ── BPI: Buyer Pressure Index (0–100) ─────────────────────────────────────
+  // Scores ONLY buyer-friendly conditions: BUY and COVER drivers.
+  // WRITE and UNWIND score 0 — they are hostile to option buyers.
+  //
+  // Components (max 100):
+  //   IV rising above B1 (session baseline)   0–25 pts  — IV demand vs whole day
+  //   IV rising above B2 (recent baseline)    0–25 pts  — IV demand recently
+  //   OI accumulation from open               0–20 pts  — position size building
+  //   OI velocity (chg_oi this snapshot)      0–15 pts  — speed of entry
+  //   IV rising streak (consecutive snaps)    0–15 pts  — sustained demand
   function computePPI(row, side) {
     var iv     = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
     var vix_   = vix || 1;
@@ -1585,130 +2245,173 @@ function OTMPositioning(props) {
     var b1Norm = b1iv ? b1iv / vix_ : null;
     var b2Norm = b2iv ? b2iv / vix_ : null;
 
-    var b1Dev  = b1Norm ? Math.abs(pct(normIV, b1Norm)) : 0;
-    var b2Dev  = b2Norm ? Math.abs(pct(normIV, b2Norm)) : 0;
+    // Signed deviations — positive means IV is ABOVE baseline (buyer-friendly)
+    var b1DevSigned = b1Norm ? pct(normIV, b1Norm) : 0;
+    var b2DevSigned = b2Norm ? pct(normIV, b2Norm) : 0;
 
-    // Absolute IV move filter — must be at least 2% change
-    var ivMoved = b1iv ? Math.abs(iv - b1iv) >= 2 : false;
-    if (!ivMoved && b1iv) return 0;
+    // Determine driver
+    var drv = driver(row, side);
 
-    var b1Score  = scoreComponent(b1Dev, [{min:5,pts:5},{min:10,pts:10},{min:15,pts:15},{min:20,pts:20}]);
-    var b2Score  = scoreComponent(b2Dev, [{min:5,pts:5},{min:10,pts:10},{min:15,pts:15},{min:20,pts:20}]);
+    // If driver is hostile to buyers (WRITE or UNWIND), score 0
+    // Buyer should not trade into falling IV regardless of OI
+    if (!drv.buyerFriendly && drv.label !== '—') return 0;
 
-    // OI: cumulative from open
-    var openOI  = getOpenOI(row.strike, side);
-    var currOI  = side === 'ce' ? (row.ce_oi || 0) : (row.pe_oi || 0);
-    var cumOI   = openOI ? currOI - openOI : 0;
-    var cumPct  = openOI && openOI > 0 ? (cumOI / openOI) * 100 : 0;
-    var oiScore = scoreComponent(cumPct, [{min:5,pts:5},{min:10,pts:10},{min:15,pts:15},{min:20,pts:20}]);
+    // IV score: only count POSITIVE deviations (IV above baseline = demand exists)
+    // Negative deviation = IV falling = bad for buyers, scores 0
+    var b1IVup = Math.max(0, b1DevSigned);
+    var b2IVup = Math.max(0, b2DevSigned);
 
-    // OI velocity: chg_oi from chain row
-    var chgOI   = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
-    var velScore = scoreComponent(Math.abs(chgOI), [{min:2000,pts:5},{min:5000,pts:10},{min:10000,pts:15},{min:20000,pts:20}]);
+    var b1Score = scoreComponent(b1IVup, [{min:0.5,pts:5},{min:1.5,pts:10},{min:3,pts:16},{min:5,pts:20},{min:8,pts:25}]);
+    var b2Score = scoreComponent(b2IVup, [{min:0.5,pts:5},{min:1.5,pts:10},{min:3,pts:16},{min:5,pts:20},{min:8,pts:25}]);
 
-    // Streak
+    // OI accumulation from session open (position size)
+    var openOI = getOpenOI(row.strike, side);
+    var currOI = side === 'ce' ? (row.ce_oi || 0) : (row.pe_oi || 0);
+    var cumOI  = openOI ? currOI - openOI : 0;
+    var cumPct = openOI && openOI > 0 ? (cumOI / openOI) * 100 : 0;
+    // For COVER driver, OI is falling — that's still bullish/bearish so use abs
+    var oiScore = scoreComponent(Math.abs(cumPct), [{min:0.5,pts:4},{min:2,pts:8},{min:5,pts:14},{min:10,pts:20}]);
+
+    // OI velocity (speed of entry/exit this snapshot)
+    var chgOI    = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
+    var velScore = scoreComponent(Math.abs(chgOI), [{min:300,pts:3},{min:1000,pts:7},{min:3000,pts:11},{min:7000,pts:15}]);
+
+    // IV rising streak — only counts when IV is genuinely above B2
     var streak      = getStreak(row.strike, side);
-    var streakScore = scoreComponent(streak, [{min:2,pts:5},{min:4,pts:10},{min:6,pts:15},{min:8,pts:20}]);
+    var streakScore = scoreComponent(streak, [{min:2,pts:3},{min:4,pts:7},{min:6,pts:11},{min:8,pts:15}]);
 
     return Math.min(100, b1Score + b2Score + oiScore + velScore + streakScore);
   }
 
-  // ── IV direction arrow ────────────────────────────────────────────────────
-  function ivDir(strike, side) {
-    if (strikeHistory.length < 2) return '→';
-    var last2 = strikeHistory.slice(-2);
-    var prev  = last2[0].strikes ? last2[0].strikes[String(strike)] : null;
-    var curr  = last2[1].strikes ? last2[1].strikes[String(strike)] : null;
-    if (!prev || !curr || typeof prev !== 'object' || typeof curr !== 'object') return '→';
-    var prevIV = side === 'ce' ? (prev.ce_iv || 0) : (prev.pe_iv || 0);
-    var currIV = side === 'ce' ? (curr.ce_iv || 0) : (curr.pe_iv || 0);
-    var diff   = currIV - prevIV;
-    if (diff > 1)   return '↑↑';
-    if (diff > 0.3) return '↑';
-    if (diff < -1)  return '↓↓';
-    if (diff < -0.3)return '↓';
-    return '→';
-  }
 
-  // ── Driver: OI + IV matrix ────────────────────────────────────────────────
-  function driver(row, side) {
-    var dir      = ivDir(row.strike, side);
-    var chgOI    = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
-    var oiUp     = chgOI > 1000;
-    var oiDn     = chgOI < -1000;
-    var ivUp     = dir === '↑' || dir === '↑↑';
-    var ivDn     = dir === '↓' || dir === '↓↓';
-    if (oiUp  && ivUp)  return { label: 'BUY',    color: side === 'ce' ? '#4ade80' : '#f87171', bias: side === 'ce' ? 'bullish' : 'bearish' };
-    if (oiUp  && ivDn)  return { label: 'WRITE',  color: side === 'ce' ? '#f87171' : '#4ade80', bias: side === 'ce' ? 'bearish' : 'bullish' };
-    if (oiDn  && ivUp)  return { label: 'COVER',  color: '#f59e0b', bias: side === 'ce' ? 'bullish' : 'bearish' };
-    if (oiDn  && ivDn)  return { label: 'UNWIND', color: '#64748b', bias: side === 'ce' ? 'bearish' : 'bullish' };
-    return { label: '—', color: '#334155', bias: 'neutral' };
-  }
 
-  // ── PPI state ─────────────────────────────────────────────────────────────
-  function ppiState(score) {
-    if (score >= 70) return 'high';
-    if (score >= 40) return 'early';
-    return 'none';
-  }
-
-  function stateLabel(score, side) {
-    var s = ppiState(score);
-    if (s === 'high') return side === 'ce' ? '🟢 BULLISH' : '🔴 BEARISH';
-    if (s === 'early') return '🟡 EARLY';
-    return '⚪ None';
-  }
-
-  function stateColor(score, side) {
-    var s = ppiState(score);
-    if (s === 'high') return side === 'ce' ? '#4ade80' : '#f87171';
-    if (s === 'early') return '#f59e0b';
-    return '#475569';
-  }
-
-  // ── Skew shape (CE side flattening/steepening) ────────────────────────────
+  // ── Skew shape — combines current gap + IV direction trend ──────────────────
+  // FLAT + IV rising on OTM  → accumulation (bullish for CE, bearish for PE)
+  // FLAT + IV falling on OTM → surface compressing, no strong signal
+  // STEEP + IV rising on ATM → ATM being bid, event/fear pricing
   function skewShape(sidesRows, side) {
-    // Compare OTM IV vs ATM IV — if OTM is catching up to ATM = flattening
-    var atmRow = sidesRows.find(function(r) { return r.strike === atm || r.is_atm; });
+    var atmRow  = sidesRows.find(function(r) { return r.strike === atm || r.is_atm; });
     if (!atmRow) return null;
-    var atmIV  = side === 'ce' ? (atmRow.ce_iv || 0) : (atmRow.pe_iv || 0);
+    var atmIV   = side === 'ce' ? (atmRow.ce_iv || 0) : (atmRow.pe_iv || 0);
     var otmRows = sidesRows.filter(function(r) { return r.strike !== atm && !r.is_atm; });
     if (otmRows.length === 0) return null;
-    var avgOTM = otmRows.reduce(function(s, r) {
+    var avgOTM  = otmRows.reduce(function(s, r) {
       return s + (side === 'ce' ? (r.ce_iv || 0) : (r.pe_iv || 0));
     }, 0) / otmRows.length;
     var gap = atmIV - avgOTM;
-    if (gap < 1)  return 'FLAT';
-    if (gap < 3)  return 'NORMAL';
+
+    // Check IV trend from history: compare last 2 snapshots for OTM avg IV
+    var ivTrend = 'flat';
+    if (strikeHistory.length >= 2) {
+      var prev = strikeHistory[strikeHistory.length - 2];
+      var curr = strikeHistory[strikeHistory.length - 1];
+      var prevOTMivs = otmRows.map(function(r) {
+        var e = prev.strikes ? prev.strikes[String(r.strike)] : null;
+        return (e && typeof e === 'object') ? (side === 'ce' ? (e.ce_iv || 0) : (e.pe_iv || 0)) : 0;
+      }).filter(function(v) { return v > 0; });
+      var currOTMivs = otmRows.map(function(r) {
+        var e = curr.strikes ? curr.strikes[String(r.strike)] : null;
+        return (e && typeof e === 'object') ? (side === 'ce' ? (e.ce_iv || 0) : (e.pe_iv || 0)) : 0;
+      }).filter(function(v) { return v > 0; });
+      if (prevOTMivs.length > 0 && currOTMivs.length > 0) {
+        var prevAvg = prevOTMivs.reduce(function(a,b){return a+b;},0) / prevOTMivs.length;
+        var currAvg = currOTMivs.reduce(function(a,b){return a+b;},0) / currOTMivs.length;
+        if (currAvg > prevAvg + 0.1) ivTrend = 'rising';
+        else if (currAvg < prevAvg - 0.1) ivTrend = 'falling';
+      }
+    }
+
+    // Shape label combines gap + trend
+    if (gap < 1) {
+      if (ivTrend === 'rising')  return 'FLAT↑'; // OTM IV rising toward ATM = accumulation
+      if (ivTrend === 'falling') return 'FLAT↓'; // OTM IV falling = writing/compression
+      return 'FLAT';
+    }
+    if (gap < 3) return 'NORMAL';
     return 'STEEP';
   }
 
   // ── Panel verdict ─────────────────────────────────────────────────────────
+  // Uses driver bias to determine true directional intent:
+  //   CE BUY / PE WRITE  → BULLISH (buyers entering calls, writers defending below)
+  //   PE BUY / CE WRITE  → BEARISH (buyers entering puts, writers capping upside)
+  //   CE WRITE + CE BUY  → mixed CE activity
   function panelVerdict(rows) {
     var ceRows = rows.filter(function(r) { return r.strike > atm; });
     var peRows = rows.filter(function(r) { return r.strike < atm; });
 
+    // Buyer-focused: only rows where BPI >= 35 AND driver is buyer-friendly
+    function rowBias(r, side) {
+      var score = computePPI(r, side);
+      if (score < 35) return null;
+      var drv = driver(r, side);
+      // Only BUY and COVER are actionable for buyers
+      if (!drv.buyerFriendly) return null;
+      return drv.bias;
+    }
+
+    var ceBiases = ceRows.map(function(r) { return rowBias(r, 'ce'); }).filter(Boolean);
+    var peBiases = peRows.map(function(r) { return rowBias(r, 'pe'); }).filter(Boolean);
+
+    // Count bullish vs bearish signals across both sides
+    var bullCount = 0, bearCount = 0;
+    ceBiases.concat(peBiases).forEach(function(b) {
+      if (b === 'bullish') bullCount++;
+      if (b === 'bearish') bearCount++;
+    });
+
     var ceScores = ceRows.map(function(r) { return computePPI(r, 'ce'); });
     var peScores = peRows.map(function(r) { return computePPI(r, 'pe'); });
-
-    var ceAbove = ceScores.filter(function(s) { return s >= 40; });
-    var peAbove = peScores.filter(function(s) { return s >= 40; });
-
-    var ceAvg   = ceScores.length ? ceScores.reduce(function(a,b){return a+b;},0)/ceScores.length : 0;
-    var peAvg   = peScores.length ? peScores.reduce(function(a,b){return a+b;},0)/peScores.length : 0;
-
+    var ceAvg    = ceScores.length ? ceScores.reduce(function(a,b){return a+b;},0)/ceScores.length : 0;
+    var peAvg    = peScores.length ? peScores.reduce(function(a,b){return a+b;},0)/peScores.length : 0;
     var strength = function(avg) { return avg >= 70 ? 'STRONG' : avg >= 40 ? 'MODERATE' : 'WEAK'; };
+    var topAvg   = Math.max(ceAvg, peAvg);
 
-    if (ceAbove.length >= 2 && peAbove.length < 1) {
-      return { text: 'CE ACCUMULATION BUILDING — WATCH ' + ceRows.map(function(r){return r.strike;}).join('–'), bias: 'BULLISH', strength: strength(ceAvg), color: '#4ade80', state: ceAvg >= 70 ? 'high' : 'early' };
+    var total = bullCount + bearCount;
+    if (total === 0) {
+      return { text: 'NO SIGNIFICANT POSITIONING DETECTED', bias: '—', strength: '—', color: '#475569', state: 'none' };
     }
-    if (peAbove.length >= 2 && ceAbove.length < 1) {
-      return { text: 'PE ACCUMULATION BUILDING — WATCH ' + peRows.map(function(r){return r.strike;}).join('–'), bias: 'BEARISH', strength: strength(peAvg), color: '#f87171', state: peAvg >= 70 ? 'high' : 'early' };
+
+    // Need clear majority (60%+) to fire a directional verdict
+    if (bullCount >= 2 && bullCount > bearCount) {
+      // Which strikes are driving the bullish signal
+      var bullStrikes = ceRows.filter(function(r) { return rowBias(r,'ce') === 'bullish'; })
+        .concat(peRows.filter(function(r) { return rowBias(r,'pe') === 'bullish'; }))
+        .map(function(r) { return r.strike; });
+      // Distinguish BUY vs COVER for richer verdict text
+      var ceBuyCount  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='BUY'   && computePPI(r,'ce')>=35; }).length;
+      var ceCovCount  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='COVER' && computePPI(r,'ce')>=35; }).length;
+      var peBuyCount  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='BUY'   && computePPI(r,'pe')>=35; }).length;
+      var peCovCount  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='COVER' && computePPI(r,'pe')>=35; }).length;
+      var bullDriver  = (ceCovCount > 0 && ceBuyCount === 0) ? 'CALL SHORT COVERING' :
+                        (ceBuyCount > 0) ? 'CALL BUYING' : 'PUT WRITING UNWINDING';
+      return {
+        text: bullDriver + ' — WATCH ' + bullStrikes.join('–'),
+        bias: 'BULLISH', strength: strength(topAvg),
+        color: '#4ade80', state: topAvg >= 70 ? 'high' : 'early',
+      };
     }
-    if (ceAbove.length >= 1 && peAbove.length >= 1) {
-      return { text: 'BOTH SIDES ACTIVE — VIX EXPANSION OR STRADDLE BUILD', bias: 'NEUTRAL', strength: '—', color: '#f59e0b', state: 'early' };
+    if (bearCount >= 2 && bearCount > bullCount) {
+      var bearStrikes = ceRows.filter(function(r) { return rowBias(r,'ce') === 'bearish'; })
+        .concat(peRows.filter(function(r) { return rowBias(r,'pe') === 'bearish'; }))
+        .map(function(r) { return r.strike; });
+      var peBuyC  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='BUY'   && computePPI(r,'pe')>=35; }).length;
+      var peCovC  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='COVER' && computePPI(r,'pe')>=35; }).length;
+      var ceBuyC  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='BUY'   && computePPI(r,'ce')>=35; }).length;
+      var ceCovC  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='COVER' && computePPI(r,'ce')>=35; }).length;
+      var bearDriver = (peCovC > 0 && peBuyC === 0) ? 'PUT SHORT COVERING' :
+                       (peBuyC > 0) ? 'PUT BUYING' : 'CALL WRITING UNWINDING';
+      return {
+        text: bearDriver + ' — WATCH ' + bearStrikes.join('–'),
+        bias: 'BEARISH', strength: strength(topAvg),
+        color: '#f87171', state: topAvg >= 70 ? 'high' : 'early',
+      };
     }
-    return { text: 'NO SIGNIFICANT POSITIONING DETECTED', bias: '—', strength: '—', color: '#475569', state: 'none' };
+    // Mixed signals
+    return {
+      text: 'MIXED SIGNALS — BOTH SIDES ACTIVE',
+      bias: 'NEUTRAL', strength: '—', color: '#f59e0b', state: 'early',
+    };
   }
 
   // ── Dominance ratio ───────────────────────────────────────────────────────
@@ -1729,251 +2432,497 @@ function OTMPositioning(props) {
     { term: 'vs B2',     full: 'Deviation from Rolling 45-min Baseline',  desc: 'How much Norm IV has moved in the last 45 mins. High B2 = fresh and active. High B1 + high B2 = sustained institutional accumulation.' },
     { term: 'Cum OI Δ',  full: 'Cumulative OI Change from 9:15 Open',     desc: 'Total net OI added since open. Not snapshot-to-snapshot — this is the full session picture. Sustained build = institutional, not retail.' },
     { term: 'Dir',       full: 'IV Direction (last 3-min snapshot)',       desc: '↑↑ rising fast (>1%), ↑ rising slowly, → flat, ↓ falling, ↓↓ falling fast. Velocity matters more than absolute level.' },
-    { term: 'Driver',    full: 'OI + IV Matrix Verdict',                   desc: 'BUY = OI↑ + IV↑ (buyer initiating). WRITE = OI↑ + IV↓ (writer initiating). COVER = OI↓ + IV↑ (short covering). UNWIND = OI↓ + IV↓ (long exiting).' },
-    { term: 'Streak',    full: 'Consecutive Snapshots Above B2 Threshold', desc: 'How many 3-min snapshots in a row have stayed elevated. 2 snaps = 6 mins. 6 snaps = 18 mins of sustained activity = high confidence.' },
-    { term: 'PPI',       full: 'Positioning Pressure Index (0–100)',       desc: 'Composite: IV vs B1 (20pts) + IV vs B2 (20pts) + Cumulative OI (20pts) + OI velocity (20pts) + Streak (20pts). Sustained accumulation scores high, single spikes do not.' },
-    { term: 'State',     full: 'Signal State',                             desc: '⚪ None (0–39): no signal. 🟡 EARLY (40–69): anomaly building, not confirmed. 🟢/🔴 HIGH CONVICTION (70+): institutional-scale footprint confirmed.' },
+    { term: 'Driver',    full: 'OI + IV Matrix — Buyer Perspective',       desc: 'BUY = OI↑ + IV↑ → buyer lifting the ask, best entry signal. COVER = OI↓ + IV↑ → writers forced to exit, strong momentum. WRITE = OI↑ + IV↓ → writers selling, IV falling — avoid buying here. UNWIND = OI↓ + IV↓ → longs leaving, no interest.' },
+    { term: 'Streak',    full: 'Consecutive Snapshots with IV Above B2',   desc: 'How many 3-min snapshots in a row show IV above the 45-min baseline. Only counts when driver is buyer-friendly. 4+ snaps = sustained demand = high confidence.' },
+    { term: 'BPI',       full: 'Buyer Pressure Index (0–100)',             desc: 'Scores ONLY buyer-friendly conditions (BUY + COVER drivers). WRITE and UNWIND score 0 — falling IV is hostile to buyers. Components: IV above B1 (25pts) + IV above B2 (25pts) + OI size (20pts) + OI velocity (15pts) + Streak (15pts).' },
+    { term: 'State',     full: 'Signal State',                             desc: '⚪ None: no buyer signal. 🟡 WATCH (35–69): buyer activity building, not yet confirmed. 🟢 CALL BUY / 🔴 PUT BUY (70+): strong buyer footprint, IV rising, OI confirming.' },
     { term: 'CE / PE',   full: 'Call / Put Option',                        desc: 'CE = Call (buyer profits if price rises). PE = Put (buyer profits if price falls). OTM CE accumulation → upside positioning. OTM PE accumulation → downside/hedge.' },
-    { term: 'Skew',      full: 'Volatility Skew Shape',                    desc: 'FLAT = OTM IV close to ATM IV (accumulation happening). NORMAL = standard smile. STEEP = OTM IV well above ATM (heavy protection demand).' },
+    { term: 'Skew',      full: 'Volatility Skew Shape',                    desc: 'FLAT↑ = OTM IV rising toward ATM = active accumulation. FLAT↓ = OTM IV falling = writing/compression. FLAT = stable. NORMAL = standard smile. STEEP = heavy protection demand.' },
     { term: 'Dominance', full: 'CE vs PE Positioning Pressure Share',      desc: 'PPI-weighted share of total pressure across all strikes. CE 70%+ = clear bullish lean. PE 70%+ = clear bearish lean. Near 50/50 = balanced or event-driven.' },
   ];
 
   if (!chain.length || !atm) return null;
 
-  var verdict    = panelVerdict(strikes);
-  var dom        = dominance(strikes);
   var ceShape    = skewShape(strikes.filter(function(r){return r.strike >= atm;}), 'ce');
   var peShape    = skewShape(strikes.filter(function(r){return r.strike <= atm;}), 'pe');
-  var verdictIcon = verdict.state === 'high' ? (verdict.bias === 'BULLISH' ? '🟢' : verdict.bias === 'BEARISH' ? '🔴' : '🟡') : verdict.state === 'early' ? '🟡' : '⚪';
+
+  // ── Diagnostic: log per-strike driver data to console ──────────────────────
+  // ── IV Environment indicator ─────────────────────────────────────────────
+  // Compares current avg IV (CE and PE separately) against B1 baseline
+  // Tells buyer whether conditions are favourable overall
+  var ivEnv = (function() {
+    var ceStrikes = strikes.filter(function(r) { return r && r.strike > atm; });
+    var peStrikes = strikes.filter(function(r) { return r && r.strike < atm; });
+    function avgDev(rows, side) {
+      var vals = rows.map(function(r) {
+        var iv   = side === 'ce' ? (r.ce_iv || 0) : (r.pe_iv || 0);
+        var b1iv = getB1IV(r.strike, side);
+        if (!b1iv || b1iv === 0) return null;
+        return ((iv - b1iv) / b1iv) * 100;
+      }).filter(function(v) { return v !== null; });
+      if (!vals.length) return null;
+      return vals.reduce(function(a,b){return a+b;},0) / vals.length;
+    }
+    var ceAvgDev   = avgDev(ceStrikes, 'ce');
+    var peAvgDev   = avgDev(peStrikes, 'pe');
+    var ceDev      = ceAvgDev !== null ? ceAvgDev : 0;
+    var peDev      = peAvgDev !== null ? peAvgDev : 0;
+    var overallDev = (ceDev + peDev) / 2;
+
+    // ── Detect CE/PE divergence — directional surface repricing ──────────────
+    // CE IV rising + PE IV falling = surface repricing BULLISH
+    //   → call demand + put supply = upside positioning
+    // PE IV rising + CE IV falling = surface repricing BEARISH
+    //   → put demand + call supply = downside positioning
+    var DIVG_THRESH = 3; // each side must be at least 3% away from baseline
+    var ceBullish   = ceDev >  DIVG_THRESH;
+    var ceBearish   = ceDev < -DIVG_THRESH;
+    var peBullish   = peDev < -DIVG_THRESH; // PE IV falling = put writing = bullish
+    var peBearish   = peDev >  DIVG_THRESH; // PE IV rising  = put buying  = bearish
+
+    if (ceBullish && peBullish) {
+      return {
+        label: 'REPRICING BULLISH', color: '#4ade80', icon: '📈',
+        desc: 'CE IV +' + ceDev.toFixed(1) + '% vs B1 · PE IV ' + peDev.toFixed(1) + '% vs B1 — call demand + put supply = upside positioning',
+        divergence: 'bullish', ceDev: ceDev, peDev: peDev,
+      };
+    }
+    if (peBearish && ceBearish) {
+      return {
+        label: 'REPRICING BEARISH', color: '#f87171', icon: '📉',
+        desc: 'PE IV +' + peDev.toFixed(1) + '% vs B1 · CE IV ' + ceDev.toFixed(1) + '% vs B1 — put demand + call supply = downside positioning',
+        divergence: 'bearish', ceDev: ceDev, peDev: peDev,
+      };
+    }
+    // No divergence — overall read
+    if (overallDev > 1.5)  return { label: 'EXPANDING',   color: '#4ade80', desc: 'IV above session baseline — buyer conditions present',    icon: '↑',  divergence: null, ceDev: ceDev, peDev: peDev };
+    if (overallDev > 0.3)  return { label: 'RISING',      color: '#a3e635', desc: 'IV drifting above baseline — watch for confirmation',     icon: '↗',  divergence: null, ceDev: ceDev, peDev: peDev };
+    if (overallDev < -1.5) return { label: 'COMPRESSING', color: '#f87171', desc: 'IV well below baseline — writer dominant, avoid buying',  icon: '↓',  divergence: null, ceDev: ceDev, peDev: peDev };
+    if (overallDev < -0.3) return { label: 'FALLING',     color: '#f59e0b', desc: 'IV drifting below baseline — caution for buyers',         icon: '↘',  divergence: null, ceDev: ceDev, peDev: peDev };
+    return { label: 'NEUTRAL', color: '#64748b', desc: 'IV flat near baseline — no clear buyer or writer edge', icon: '→', divergence: null, ceDev: ceDev, peDev: peDev };
+  })();
+
+  // ── Confluence zones ──────────────────────────────────────────────────────
+  // Find consecutive adjacent strikes where driver is buyer-friendly on same side
+  var confluenceZones = (function() {
+    var zones = [];
+    // CE side — strikes above ATM, sorted ascending
+    var ceStrikes = strikes.filter(function(r) { return r && r.strike > atm; })
+                           .sort(function(a,b) { return a.strike - b.strike; });
+    // PE side — strikes below ATM, sorted descending (closest first)
+    var peStrikes = strikes.filter(function(r) { return r && r.strike < atm; })
+                           .sort(function(a,b) { return b.strike - a.strike; });
+
+    // Find buyer-friendly zones (BUY + COVER with IV above B1)
+    function findBuyerZones(rows, side) {
+      var current = [];
+      rows.forEach(function(row) {
+        var drv   = driver(row, side);
+        var b1iv  = getB1IV(row.strike, side);
+        var curIV = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
+        // IV must be above B1 for buyer zone — confirms demand not just noise
+        if (drv.buyerFriendly && b1iv && curIV > b1iv) {
+          current.push({ row: row, drv: drv, type: 'buyer' });
+        } else {
+          if (current.length >= 1) zones.push({ side: side, rows: current.slice(), type: 'buyer' });
+          current = [];
+        }
+      });
+      if (current.length >= 1) zones.push({ side: side, rows: current.slice(), type: 'buyer' });
+    }
+
+    // Find writer zones (WRITE + UNWIND with IV below B1)
+    // These are important for buyers because:
+    //   CE WRITE zone = call writers capping upside = resistance = bearish
+    //   PE WRITE zone = put writers building support = bullish confirmation
+    //   CE UNWIND zone = call longs exiting = bearish momentum losing
+    //   PE UNWIND zone = put longs exiting = bullish (bears giving up)
+    function findWriterZones(rows, side) {
+      var current = [];
+      rows.forEach(function(row) {
+        var drv   = driver(row, side);
+        var b1iv  = getB1IV(row.strike, side);
+        var curIV = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
+        // IV must be below B1 for writer zone
+        if (!drv.buyerFriendly && drv.label !== '—' && b1iv && curIV < b1iv) {
+          current.push({ row: row, drv: drv, type: 'writer' });
+        } else {
+          if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'writer' });
+          current = [];
+        }
+      });
+      if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'writer' });
+    }
+
+    findBuyerZones(ceStrikes, 'ce');
+    findBuyerZones(peStrikes, 'pe');
+    findWriterZones(ceStrikes, 'ce');
+    findWriterZones(peStrikes, 'pe');
+
+    // Enrich each zone
+    zones.forEach(function(z) {
+      var oppSide = z.side === 'ce' ? 'pe' : 'ce';
+      z.strikes   = z.rows.map(function(i){ return i.row.strike; });
+
+      if (z.type === 'buyer') {
+        var buyCount   = z.rows.filter(function(i){ return i.drv.label === 'BUY' || i.drv.label === 'IV↑'; }).length;
+        var coverCount = z.rows.filter(function(i){ return i.drv.label === 'COVER'; }).length;
+        z.driverLabel  = coverCount > buyCount ? 'SHORT COVERING' : 'BUYING';
+        z.bias         = z.side === 'ce' ? 'BULLISH' : 'BEARISH';
+        z.color        = z.side === 'ce' ? '#4ade80' : '#f87171';
+        // Opposite side confirmation: writer on opp side = confirms direction
+        var confirmCount = 0, contradictCount = 0;
+        z.rows.forEach(function(item) {
+          var oppDrv = driver(item.row, oppSide);
+          if (!oppDrv.buyerFriendly && oppDrv.label !== '—') confirmCount++;
+          if (oppDrv.buyerFriendly) contradictCount++;
+        });
+        z.confirmed    = confirmCount >= Math.ceil(z.rows.length / 2);
+        z.contradicted = contradictCount >= Math.ceil(z.rows.length / 2);
+        z.confirmNote  = z.confirmed ? '✓ opposite side confirms' : z.contradicted ? '⚠ opposite side contradicts' : '';
+      } else {
+        // Writer zone — interpret for buyer
+        var dominantDriver = z.rows.filter(function(i){ return i.drv.label === 'WRITE'; }).length
+                           > z.rows.filter(function(i){ return i.drv.label === 'UNWIND'; }).length
+                           ? 'WRITE' : 'UNWIND';
+        if (z.side === 'ce') {
+          // CE WRITE = call resistance building = bearish
+          // CE UNWIND = call longs leaving = bearish momentum
+          z.driverLabel = dominantDriver === 'WRITE' ? 'CALL WRITING' : 'CALL UNWINDING';
+          z.bias        = 'BEARISH';
+          z.color       = '#f87171';
+          z.confirmNote = 'resistance building — upside capped';
+        } else {
+          // PE WRITE = put support building = bullish
+          // PE UNWIND = put longs leaving = bulls exiting puts = bullish
+          z.driverLabel = dominantDriver === 'WRITE' ? 'PUT WRITING' : 'PUT UNWINDING';
+          z.bias        = 'BULLISH';
+          z.color       = '#4ade80';
+          z.confirmNote = dominantDriver === 'WRITE' ? 'support building — downside protected' : 'bears giving up — bullish';
+        }
+        z.confirmed    = false;
+        z.contradicted = false;
+      }
+    });
+
+    // Sort: buyer zones first, then writer zones; within each group by zone size desc
+    zones.sort(function(a, b) {
+      if (a.type !== b.type) return a.type === 'buyer' ? -1 : 1;
+      return b.rows.length - a.rows.length;
+    });
+
+    return zones;
+  })();
 
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>
           <p style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            📡 OTM Positioning Intelligence
+            📡 OTM Positioning — Option Buyer View
           </p>
           <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>
-            ATM ±5 strikes · Norm IV vs B1 (10:00–10:15) &amp; B2 (rolling 45-min) · OI + IV matrix · 3-min snapshots
+            ATM ±5 · CE &amp; PE OI, COI, IV vs B1/B2, Driver · 3-min snapshots · BUY &amp; COVER highlighted
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-          <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>CE SKEW</p>
-            <span style={{ fontSize: 11, fontWeight: 700, color: ceShape === 'FLAT' ? '#4ade80' : ceShape === 'STEEP' ? '#f87171' : '#f59e0b' }}>{ceShape || '—'}</span>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* IV Environment */}
+          <div style={{ padding: '6px 12px', borderRadius: 8, background: ivEnv.color + '12', border: '1px solid ' + ivEnv.color + '33' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>IV ENVIRONMENT</p>
+            <span style={{ fontSize: 12, fontWeight: 800, color: ivEnv.color }}>{ivEnv.icon} {ivEnv.label}</span>
           </div>
-          <div style={{ width: 1, height: 28, background: '#1e293b' }} />
+          <div style={{ width: 1, height: 32, background: '#1e293b' }} />
+          {/* Skew */}
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>PE SKEW</p>
-            <span style={{ fontSize: 11, fontWeight: 700, color: peShape === 'FLAT' ? '#f87171' : peShape === 'STEEP' ? '#4ade80' : '#f59e0b' }}>{peShape || '—'}</span>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', fontWeight: 700, textTransform: 'uppercase' }}>CE SKEW</p>
+            <span style={{ fontSize: 11, fontWeight: 700, color: ceShape === 'FLAT↑' ? '#4ade80' : ceShape === 'FLAT↓' ? '#f87171' : '#64748b' }}>{ceShape || '—'}</span>
           </div>
-          <div style={{ width: 1, height: 28, background: '#1e293b' }} />
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>VIX</p>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', fontWeight: 700, textTransform: 'uppercase' }}>PE SKEW</p>
+            <span style={{ fontSize: 11, fontWeight: 700, color: peShape === 'FLAT↑' ? '#f87171' : peShape === 'FLAT↓' ? '#4ade80' : '#64748b' }}>{peShape || '—'}</span>
+          </div>
+          <div style={{ width: 1, height: 32, background: '#1e293b' }} />
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', fontWeight: 700, textTransform: 'uppercase' }}>VIX</p>
             <span style={{ fontSize: 13, fontWeight: 800, color: vix > 20 ? '#f87171' : vix > 15 ? '#f59e0b' : '#4ade80' }}>{vix > 0 ? vix.toFixed(2) : '—'}</span>
           </div>
         </div>
       </div>
 
-      {/* Verdict Banner */}
-      <div style={{ padding: '10px 20px', borderBottom: '1px solid #1e293b', background: verdict.state === 'high' ? 'rgba(74,222,128,0.04)' : verdict.state === 'early' ? 'rgba(245,158,11,0.04)' : 'transparent', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 16 }}>{verdictIcon}</span>
-        <div style={{ flex: 1 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: verdict.color, fontFamily: 'monospace', letterSpacing: '0.02em' }}>
-            {verdict.text}
-          </span>
-          {verdict.bias !== '—' && (
-            <span style={{ marginLeft: 16, fontSize: 11, color: '#475569' }}>
-              BIAS: <span style={{ color: verdict.color, fontWeight: 700 }}>{verdict.bias}</span>
-              {verdict.strength !== '—' && <span style={{ marginLeft: 8, color: '#475569' }}>· STRENGTH: <span style={{ color: '#94a3b8', fontWeight: 600 }}>{verdict.strength}</span></span>}
-            </span>
-          )}
-        </div>
-        {/* Dominance bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <span style={{ fontSize: 10, color: '#f87171', fontWeight: 700 }}>CE {dom.cePct}%</span>
-          <div style={{ width: 80, height: 6, background: '#1e293b', borderRadius: 3, overflow: 'hidden', display: 'flex' }}>
-            <div style={{ width: dom.cePct + '%', background: '#f87171', transition: 'width 0.4s' }} />
-            <div style={{ width: dom.pePct + '%', background: '#4ade80', transition: 'width 0.4s' }} />
-          </div>
-          <span style={{ fontSize: 10, color: '#4ade80', fontWeight: 700 }}>PE {dom.pePct}%</span>
-        </div>
+      {/* ── IV Environment description ── */}
+      <div style={{ padding: '7px 20px', background: ivEnv.color + '08', borderBottom: '1px solid #1e293b' }}>
+        <span style={{ fontSize: 11, color: ivEnv.color }}>{ivEnv.desc}</span>
       </div>
 
-      {/* Mirrored CE | STRIKE | PE table */}
+      {/* ── Confluence Zones ── */}
+      {confluenceZones.length > 0 && (
+        <div style={{ padding: '10px 20px', borderBottom: '1px solid #1e293b', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: 0, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              OI Confluence Zones
+            </p>
+            {/* Surface repricing banner if divergence detected */}
+            {ivEnv.divergence && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: ivEnv.color,
+                             padding: '2px 10px', borderRadius: 4,
+                             background: ivEnv.color + '15', border: '1px solid ' + ivEnv.color + '44' }}>
+                {ivEnv.icon} SURFACE REPRICING {ivEnv.divergence.toUpperCase()}
+                <span style={{ fontSize: 9, fontWeight: 400, color: '#64748b', marginLeft: 8 }}>
+                  CE {ivEnv.ceDev > 0 ? '+' : ''}{ivEnv.ceDev.toFixed(1)}% · PE {ivEnv.peDev > 0 ? '+' : ''}{ivEnv.peDev.toFixed(1)}% vs B1
+                </span>
+              </span>
+            )}
+          </div>
+          {confluenceZones.map(function(z, i) {
+            var isBuyer  = z.type === 'buyer';
+            var icon     = isBuyer
+              ? (z.side === 'ce' ? '📈' : '📉')
+              : (z.bias === 'BULLISH' ? '🛡' : '🚧');
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px',
+                                    background: z.color + (isBuyer ? '0d' : '06'),
+                                    border: '1px solid ' + z.color + (isBuyer ? '44' : '22'),
+                                    borderLeft: '3px solid ' + z.color + (isBuyer ? '' : '88'),
+                                    borderRadius: 6, flexWrap: 'wrap' }}>
+                {/* Type badge */}
+                <span style={{ fontSize: 9, fontWeight: 700, color: isBuyer ? z.color : '#64748b',
+                               padding: '1px 6px', borderRadius: 3,
+                               background: isBuyer ? z.color + '20' : '#1e293b',
+                               border: '1px solid ' + (isBuyer ? z.color + '44' : '#334155'),
+                               textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {isBuyer ? (z.side === 'ce' ? 'CALL' : 'PUT') : z.side.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: isBuyer ? z.color : '#94a3b8' }}>
+                  {icon} {z.driverLabel}
+                </span>
+                <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
+                  {z.strikes.join(' · ')}
+                </span>
+                <span style={{ fontSize: 10, color: '#475569' }}>
+                  {z.rows.length} strike{z.rows.length > 1 ? 's' : ''}
+                </span>
+                {z.confirmNote && (
+                  <span style={{ fontSize: 10, color: isBuyer ? z.color : '#64748b',
+                                 padding: '1px 7px', borderRadius: 4,
+                                 background: isBuyer ? z.color + '15' : '#1e293b',
+                                 border: '1px solid ' + (isBuyer ? z.color + '33' : '#334155') }}>
+                    {z.confirmNote}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Raw Data Table: CE | STRIKE | PE ── */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ background: '#0d1424' }}>
-              {/* CE side headers — right-aligned, reading inward toward strike */}
-              <th style={{ padding: '8px 10px', color: '#f87171', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #f8717133', colSpan: 5 }} colSpan={5}>
+              <th colSpan={5} style={{ padding: '7px 10px', color: '#f87171', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #f8717133' }}>
                 ◀ CALLS (CE)
               </th>
-              {/* Strike centre */}
-              <th style={{ padding: '8px 14px', color: '#60a5fa', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #60a5fa33', background: '#0a1020' }}>
+              <th style={{ padding: '7px 14px', color: '#60a5fa', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #60a5fa33', background: '#0a1020' }}>
                 STRIKE
               </th>
-              {/* PE side headers — left-aligned, reading outward from strike */}
-              <th style={{ padding: '8px 10px', color: '#4ade80', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #4ade8033', colSpan: 5 }} colSpan={5}>
+              <th colSpan={5} style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #4ade8033' }}>
                 PUTS (PE) ▶
               </th>
             </tr>
-            <tr style={{ background: '#1e293b' }}>
-              {/* CE sub-headers — right to left toward strike */}
-              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>State</th>
-              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>PPI</th>
-              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>Driver</th>
-              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>Cum OI</th>
-              <th style={{ padding: '7px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>Norm IV · B1 · B2</th>
+            <tr style={{ background: '#1a2332' }}>
+              {/* CE headers — reading inward toward strike */}
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Driver</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>IV · B1 · B2</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>COI</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Cum OI</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap', borderRight: '2px solid #1e293b' }}>OI</th>
               {/* Strike */}
-              <th style={{ padding: '7px 14px', color: '#64748b', fontWeight: 600, textAlign: 'center', fontSize: 10, background: '#0a1020', whiteSpace: 'nowrap' }}>
+              <th style={{ padding: '6px 14px', color: '#475569', fontWeight: 600, textAlign: 'center', fontSize: 9, background: '#0a1020' }}>
                 <span style={{ display: 'block', fontSize: 8, color: '#334155' }}>VIX {vix > 0 ? vix.toFixed(1) : '—'}</span>
               </th>
-              {/* PE sub-headers — left to right away from strike */}
-              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>Norm IV · B1 · B2</th>
-              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>Cum OI</th>
-              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>Driver</th>
-              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 10, whiteSpace: 'nowrap' }}>PPI</th>
-              <th style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'right', fontSize: 10, whiteSpace: 'nowrap' }}>State</th>
+              {/* PE headers — reading outward from strike */}
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap', borderLeft: '2px solid #1e293b' }}>OI</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Cum OI</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>COI</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>IV · B1 · B2</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Driver</th>
             </tr>
           </thead>
           <tbody>
             {strikes.map(function(row) {
+              if (!row) return null;
               var isATM  = row.strike === atm || row.is_atm;
               var rowBg  = isATM ? 'rgba(96,165,250,0.06)' : 'transparent';
 
-              // ── CE data ──
-              var ceRow    = row; // same strike row has both CE and PE fields
-              var cePPI    = isATM ? 0 : computePPI(ceRow, 'ce');
-              var ceIV     = row.ce_iv || 0;
-              var ceNormIV = vix > 0 ? ceIV / vix : 0;
-              var ceB1iv   = getB1IV(row.strike, 'ce');
-              var ceB2iv   = getB2IV(row.strike, 'ce');
-              var ceB1Norm = ceB1iv && vix > 0 ? ceB1iv / vix : null;
-              var ceB2Norm = ceB2iv && vix > 0 ? ceB2iv / vix : null;
-              var ceB1Dev  = ceB1Norm ? pct(ceNormIV, ceB1Norm) : null;
-              var ceB2Dev  = ceB2Norm ? pct(ceNormIV, ceB2Norm) : null;
-              var ceOpenOI = getOpenOI(row.strike, 'ce');
-              var ceCumOI  = ceOpenOI ? (row.ce_oi || 0) - ceOpenOI : null;
-              var ceDir    = isATM ? '→' : ivDir(row.strike, 'ce');
-              var ceDrv    = isATM ? { label: '—', color: '#334155' } : driver(row, 'ce');
-              var ceStreak = isATM ? 0 : getStreak(row.strike, 'ce');
-              var cePPIColor   = cePPI >= 70 ? '#4ade80' : cePPI >= 40 ? '#f59e0b' : '#475569';
-              var ceDirColor   = ceDir === '↑↑' || ceDir === '↑' ? '#4ade80' : ceDir === '↓↓' || ceDir === '↓' ? '#f87171' : '#475569';
-              var ceB1Color    = ceB1Dev !== null ? (ceB1Dev > 10 ? '#4ade80' : ceB1Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
-              var ceB2Color    = ceB2Dev !== null ? (ceB2Dev > 10 ? '#4ade80' : ceB2Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
-              var ceCumColor   = ceCumOI !== null ? (Math.abs(ceCumOI) > 15000 ? '#4ade80' : Math.abs(ceCumOI) > 8000 ? '#f59e0b' : '#64748b') : '#334155';
-              var ceStateLabel = stateLabel(cePPI, 'ce');
-              var ceStateColor = stateColor(cePPI, 'ce');
+              // ── compute all raw values ──
+              function mkSide(side) {
+                var iv      = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
+                var oi      = side === 'ce' ? (row.ce_oi || 0) : (row.pe_oi || 0);
+                var coi     = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
+                var b1iv    = getB1IV(row.strike, side);
+                var b2iv    = getB2IV(row.strike, side);
+                var b1Dev   = (b1iv && b1iv > 0) ? ((iv - b1iv) / b1iv) * 100 : null;
+                var b2Dev   = (b2iv && b2iv > 0) ? ((iv - b2iv) / b2iv) * 100 : null;
+                var openOI  = getOpenOI(row.strike, side);
+                var cumOI   = (openOI && openOI > 0) ? oi - openOI : null;
+                var drv     = isATM ? { label: '—', color: '#334155', buyerFriendly: false } : driver(row, side);
+                var ivD     = isATM ? '→' : ivDir(row.strike, side);
+                return { iv: iv, oi: oi, coi: coi, b1Dev: b1Dev, b2Dev: b2Dev, cumOI: cumOI, drv: drv, ivD: ivD };
+              }
 
-              // ── PE data ──
-              var pePPI    = isATM ? 0 : computePPI(row, 'pe');
-              var peIV     = row.pe_iv || 0;
-              var peNormIV = vix > 0 ? peIV / vix : 0;
-              var peB1iv   = getB1IV(row.strike, 'pe');
-              var peB2iv   = getB2IV(row.strike, 'pe');
-              var peB1Norm = peB1iv && vix > 0 ? peB1iv / vix : null;
-              var peB2Norm = peB2iv && vix > 0 ? peB2iv / vix : null;
-              var peB1Dev  = peB1Norm ? pct(peNormIV, peB1Norm) : null;
-              var peB2Dev  = peB2Norm ? pct(peNormIV, peB2Norm) : null;
-              var peOpenOI = getOpenOI(row.strike, 'pe');
-              var peCumOI  = peOpenOI ? (row.pe_oi || 0) - peOpenOI : null;
-              var peDir    = isATM ? '→' : ivDir(row.strike, 'pe');
-              var peDrv    = isATM ? { label: '—', color: '#334155' } : driver(row, 'pe');
-              var peStreak = isATM ? 0 : getStreak(row.strike, 'pe');
-              var pePPIColor   = pePPI >= 70 ? '#f87171' : pePPI >= 40 ? '#f59e0b' : '#475569';
-              var peDirColor   = peDir === '↑↑' || peDir === '↑' ? '#f87171' : peDir === '↓↓' || peDir === '↓' ? '#4ade80' : '#475569';
-              var peB1Color    = peB1Dev !== null ? (peB1Dev > 10 ? '#f87171' : peB1Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
-              var peB2Color    = peB2Dev !== null ? (peB2Dev > 10 ? '#f87171' : peB2Dev > 5 ? '#f59e0b' : '#64748b') : '#334155';
-              var peCumColor   = peCumOI !== null ? (Math.abs(peCumOI) > 15000 ? '#f87171' : Math.abs(peCumOI) > 8000 ? '#f59e0b' : '#64748b') : '#334155';
-              var peStateLabel = stateLabel(pePPI, 'pe');
-              var peStateColor = stateColor(pePPI, 'pe');
+              var ce = mkSide('ce');
+              var pe = mkSide('pe');
 
-              function fmtDev(v) { return v !== null ? (v > 0 ? '+' : '') + v.toFixed(1) + '%' : '—'; }
+              // Highlight row if either side is buyer-friendly with IV above B1
+              var ceActive = !isATM && ce.drv.buyerFriendly && ce.b1Dev !== null && ce.b1Dev > 0;
+              var peActive = !isATM && pe.drv.buyerFriendly && pe.b1Dev !== null && pe.b1Dev > 0;
+              var rowHighlight = ceActive ? 'rgba(74,222,128,0.04)' : peActive ? 'rgba(248,113,113,0.04)' : rowBg;
+
+              // Color helpers
+              function coiColor(v, side) {
+                // For buyers: COI positive on CE = call demand, negative on PE = put demand being removed
+                if (v === 0) return '#334155';
+                if (side === 'ce') return v > 0 ? '#4ade80' : '#f87171';
+                return v > 0 ? '#4ade80' : '#f87171';
+              }
+              function devColor(v, side) {
+                // Positive deviation (IV above baseline) = green for both
+                // Negative = red — IV falling is bad for buyers
+                if (v === null) return '#334155';
+                if (v > 1.5) return '#4ade80';
+                if (v > 0)   return '#a3e635';
+                if (v > -1)  return '#f59e0b';
+                return '#f87171';
+              }
+              function oisize(n) {
+                if (!n && n !== 0) return '—';
+                var a = Math.abs(n);
+                if (a >= 10000000) return (n/10000000).toFixed(1)+'Cr';
+                if (a >= 100000)   return (n/100000).toFixed(1)+'L';
+                if (a >= 1000)     return (n/1000).toFixed(0)+'K';
+                return String(n);
+              }
+              function coiFmt(n) {
+                if (!n && n !== 0) return '—';
+                var s = n > 0 ? '+' : '';
+                var a = Math.abs(n);
+                if (a >= 100000) return s+(a/100000).toFixed(1)+'L';
+                if (a >= 1000)   return s+(a/1000).toFixed(0)+'K';
+                return s+n;
+              }
+              function cumFmt(n) {
+                if (n === null) return '—';
+                var s = n > 0 ? '+' : '';
+                var a = Math.abs(n);
+                if (a >= 100000) return s+(a/100000).toFixed(1)+'L';
+                if (a >= 1000)   return s+(a/1000).toFixed(0)+'K';
+                return s+n;
+              }
+              function devFmt(v) {
+                if (v === null) return '—';
+                return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+              }
+              function ivFmt(v) { return v > 0 ? v.toFixed(1)+'%' : '—'; }
+
+              // Driver cell — buyer-friendly drivers get color, others grey
+              function drvCell(drv, ivD, side) {
+                var label = drv.label;
+                var ivDColor = ivD === '↑↑' || ivD === '↑' ? '#4ade80' : ivD === '↓↓' || ivD === '↓' ? '#f87171' : '#475569';
+                if (label === '—') return (
+                  <span style={{ color: '#334155', fontSize: 10 }}>— {ivD}</span>
+                );
+                var col = drv.buyerFriendly
+                  ? (side === 'ce' ? '#4ade80' : '#f87171')
+                  : '#475569';
+                return (
+                  <span>
+                    <span style={{ fontSize: 11, fontWeight: drv.buyerFriendly ? 800 : 400, color: col,
+                                   padding: drv.buyerFriendly ? '1px 5px' : '0',
+                                   background: drv.buyerFriendly ? col+'15' : 'transparent',
+                                   borderRadius: 3, border: drv.buyerFriendly ? '1px solid '+col+'44' : 'none' }}>
+                      {label}
+                    </span>
+                    <span style={{ fontSize: 10, color: ivDColor, marginLeft: 4 }}>{ivD}</span>
+                  </span>
+                );
+              }
 
               return (
-                <tr key={row.strike} style={{ background: rowBg, borderBottom: '1px solid #1e293b22' }}>
+                <tr key={row.strike} style={{ background: rowHighlight, borderBottom: '1px solid #1e293b22',
+                                              borderLeft: ceActive ? '2px solid #4ade8033' : peActive ? '2px solid #f8717133' : '2px solid transparent' }}>
 
-                  {/* ── CE side (right-to-left: state | ppi | driver | cumOI | normIV·b1·b2) ── */}
-                  <td style={{ padding: '9px 10px', textAlign: 'left', borderRight: '1px solid #1e293b11' }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: ceStateColor, whiteSpace: 'nowrap' }}>{ceStateLabel}</span>
+                  {/* ── CE side (Driver | IV·B1·B2 | COI | CumOI | OI) ── */}
+                  <td style={{ padding: '8px 10px', textAlign: 'left', borderRight: '1px solid #1e293b22' }}>
+                    {isATM ? <span style={{ color: '#334155', fontSize: 10 }}>—</span> : drvCell(ce.drv, ce.ivD, 'ce')}
                   </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '1px solid #1e293b11' }}>
-                    {isATM ? <span style={{ color: '#334155' }}>—</span> : (
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <div style={{ width: 36, height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
-                          <div style={{ width: cePPI + '%', height: '100%', background: cePPIColor, borderRadius: 2, transition: 'width 0.5s' }} />
-                        </div>
-                        <span style={{ color: cePPIColor, fontWeight: 700, fontSize: 11, minWidth: 22 }}>{cePPI}</span>
-                        {ceStreak >= 2 && <span style={{ fontSize: 9, color: '#475569' }}>{ceStreak}s</span>}
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '1px solid #1e293b11' }}>
-                    <span style={{ color: ceDrv.color, fontWeight: 700, fontSize: 11 }}>{ceDrv.label}</span>
-                    <span style={{ marginLeft: 4, color: ceDirColor, fontWeight: 700, fontSize: 11 }}>{ceDir}</span>
-                  </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '1px solid #1e293b11' }}>
-                    <span style={{ color: ceCumColor, fontFamily: 'monospace', fontSize: 11, fontWeight: ceCumOI !== null && Math.abs(ceCumOI) > 8000 ? 700 : 400 }}>
-                      {ceCumOI !== null ? fmtOI(ceCumOI) : '—'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'right', borderRight: '2px solid #1e293b' }}>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', borderRight: '1px solid #1e293b22' }}>
                     {isATM ? <span style={{ color: '#334155', fontFamily: 'monospace', fontSize: 11 }}>—</span> : (
                       <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
-                        <span style={{ color: '#94a3b8' }}>{ceNormIV.toFixed(2)}</span>
-                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
-                        <span style={{ color: ceB1Color, fontWeight: ceB1Dev !== null && Math.abs(ceB1Dev) > 5 ? 700 : 400 }}>{fmtDev(ceB1Dev)}</span>
-                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
-                        <span style={{ color: ceB2Color, fontWeight: ceB2Dev !== null && Math.abs(ceB2Dev) > 5 ? 700 : 400 }}>{fmtDev(ceB2Dev)}</span>
+                        <span style={{ color: '#94a3b8' }}>{ivFmt(ce.iv)}</span>
+                        <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
+                        <span style={{ color: devColor(ce.b1Dev, 'ce'), fontWeight: ce.b1Dev !== null && Math.abs(ce.b1Dev) > 1 ? 700 : 400 }}>{devFmt(ce.b1Dev)}</span>
+                        <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
+                        <span style={{ color: devColor(ce.b2Dev, 'ce'), fontWeight: ce.b2Dev !== null && Math.abs(ce.b2Dev) > 1 ? 700 : 400 }}>{devFmt(ce.b2Dev)}</span>
                       </span>
                     )}
                   </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontFamily: 'monospace', fontSize: 11,
+                               color: coiColor(ce.coi, 'ce'), fontWeight: Math.abs(ce.coi) > 1000 ? 700 : 400,
+                               borderRight: '1px solid #1e293b22' }}>
+                    {coiFmt(ce.coi)}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontFamily: 'monospace', fontSize: 11,
+                               color: ce.cumOI !== null ? (ce.cumOI > 0 ? '#4ade80' : ce.cumOI < 0 ? '#f87171' : '#475569') : '#334155',
+                               fontWeight: ce.cumOI !== null && Math.abs(ce.cumOI) > 5000 ? 700 : 400,
+                               borderRight: '1px solid #1e293b22' }}>
+                    {cumFmt(ce.cumOI)}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#f87171', fontWeight: 600,
+                               fontSize: 11, borderRight: '2px solid #1e293b' }}>
+                    {oisize(ce.oi)}
+                  </td>
 
-                  {/* ── STRIKE centre ── */}
-                  <td style={{ padding: '9px 14px', textAlign: 'center', background: isATM ? 'rgba(96,165,250,0.1)' : '#0a1020', borderLeft: '2px solid #1e293b', borderRight: '2px solid #1e293b' }}>
+                  {/* ── STRIKE ── */}
+                  <td style={{ padding: '8px 14px', textAlign: 'center', background: isATM ? 'rgba(96,165,250,0.1)' : '#0a1020',
+                               borderLeft: '2px solid #1e293b', borderRight: '2px solid #1e293b' }}>
                     <span style={{ fontSize: 13, fontWeight: 800, color: isATM ? '#60a5fa' : '#f1f5f9' }}>
                       {row.strike.toLocaleString()}
                     </span>
-                    {isATM && <span style={{ display: 'block', fontSize: 9, color: '#60a5fa', fontWeight: 700, letterSpacing: '0.06em' }}>ATM</span>}
+                    {isATM && <span style={{ display: 'block', fontSize: 8, color: '#60a5fa', fontWeight: 700, letterSpacing: '0.06em' }}>ATM</span>}
                   </td>
 
-                  {/* ── PE side (left-to-right: normIV·b1·b2 | cumOI | driver | ppi | state) ── */}
-                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
+                  {/* ── PE side (OI | CumOI | COI | IV·B1·B2 | Driver) ── */}
+                  <td style={{ padding: '8px 10px', textAlign: 'left', color: '#4ade80', fontWeight: 600,
+                               fontSize: 11, borderLeft: '2px solid #1e293b', borderRight: '1px solid #1e293b22' }}>
+                    {oisize(pe.oi)}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'left', fontFamily: 'monospace', fontSize: 11,
+                               color: pe.cumOI !== null ? (pe.cumOI > 0 ? '#4ade80' : pe.cumOI < 0 ? '#f87171' : '#475569') : '#334155',
+                               fontWeight: pe.cumOI !== null && Math.abs(pe.cumOI) > 5000 ? 700 : 400,
+                               borderRight: '1px solid #1e293b22' }}>
+                    {cumFmt(pe.cumOI)}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'left', fontFamily: 'monospace', fontSize: 11,
+                               color: coiColor(pe.coi, 'pe'), fontWeight: Math.abs(pe.coi) > 1000 ? 700 : 400,
+                               borderRight: '1px solid #1e293b22' }}>
+                    {coiFmt(pe.coi)}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'left', borderRight: '1px solid #1e293b22' }}>
                     {isATM ? <span style={{ color: '#334155', fontFamily: 'monospace', fontSize: 11 }}>—</span> : (
                       <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
-                        <span style={{ color: '#94a3b8' }}>{peNormIV.toFixed(2)}</span>
-                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
-                        <span style={{ color: peB1Color, fontWeight: peB1Dev !== null && Math.abs(peB1Dev) > 5 ? 700 : 400 }}>{fmtDev(peB1Dev)}</span>
-                        <span style={{ color: '#334155', margin: '0 3px' }}>·</span>
-                        <span style={{ color: peB2Color, fontWeight: peB2Dev !== null && Math.abs(peB2Dev) > 5 ? 700 : 400 }}>{fmtDev(peB2Dev)}</span>
+                        <span style={{ color: '#94a3b8' }}>{ivFmt(pe.iv)}</span>
+                        <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
+                        <span style={{ color: devColor(pe.b1Dev, 'pe'), fontWeight: pe.b1Dev !== null && Math.abs(pe.b1Dev) > 1 ? 700 : 400 }}>{devFmt(pe.b1Dev)}</span>
+                        <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
+                        <span style={{ color: devColor(pe.b2Dev, 'pe'), fontWeight: pe.b2Dev !== null && Math.abs(pe.b2Dev) > 1 ? 700 : 400 }}>{devFmt(pe.b2Dev)}</span>
                       </span>
                     )}
                   </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
-                    <span style={{ color: peCumColor, fontFamily: 'monospace', fontSize: 11, fontWeight: peCumOI !== null && Math.abs(peCumOI) > 8000 ? 700 : 400 }}>
-                      {peCumOI !== null ? fmtOI(peCumOI) : '—'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
-                    <span style={{ color: peDirColor, fontWeight: 700, fontSize: 11 }}>{peDir}</span>
-                    <span style={{ marginLeft: 4, color: peDrv.color, fontWeight: 700, fontSize: 11 }}>{peDrv.label}</span>
-                  </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'left', borderLeft: '1px solid #1e293b11' }}>
-                    {isATM ? <span style={{ color: '#334155' }}>—</span> : (
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <span style={{ color: pePPIColor, fontWeight: 700, fontSize: 11, minWidth: 22 }}>{pePPI}</span>
-                        {peStreak >= 2 && <span style={{ fontSize: 9, color: '#475569' }}>{peStreak}s</span>}
-                        <div style={{ width: 36, height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
-                          <div style={{ width: pePPI + '%', height: '100%', background: pePPIColor, borderRadius: 2, transition: 'width 0.5s' }} />
-                        </div>
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: '9px 10px', textAlign: 'right', borderLeft: '1px solid #1e293b11' }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: peStateColor, whiteSpace: 'nowrap' }}>{peStateLabel}</span>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                    {isATM ? <span style={{ color: '#334155', fontSize: 10 }}>—</span> : drvCell(pe.drv, pe.ivD, 'pe')}
                   </td>
 
                 </tr>
@@ -1983,57 +2932,59 @@ function OTMPositioning(props) {
         </table>
       </div>
 
-      {/* PPI Scale legend */}
-      <div style={{ padding: '10px 20px', borderTop: '1px solid #1e293b', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+      {/* ── Footer: how to read ── */}
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #1e293b', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         {[
-          { range: 'PPI 0–39',  label: '⚪ No Signal',       color: '#475569', desc: 'Equilibrium — no meaningful positioning' },
-          { range: 'PPI 40–69', label: '🟡 Early Warning',   color: '#f59e0b', desc: 'Anomaly building — not yet confirmed' },
-          { range: 'PPI 70–100',label: '🟢/🔴 High Conviction', color: '#4ade80', desc: 'Both baselines breached + OI confirmed + sustained' },
-        ].map(function(s) {
+          { label: 'BUY',    color: '#4ade80', desc: 'OI↑ + IV↑  — buyer lifting ask, best entry' },
+          { label: 'COVER',  color: '#f59e0b', desc: 'OI↓ + IV↑  — writers forced to exit, strong momentum' },
+          { label: 'IV↑',    color: '#4ade8088', desc: 'IV above B1, OI flat — demand building, no fresh OI yet' },
+          { label: 'WRITE',  color: '#475569', desc: 'OI↑ + IV↓  — writer selling, avoid buying here' },
+          { label: 'UNWIND', color: '#334155', desc: 'OI↓ + IV↓  — longs exiting, no buyer interest' },
+          { label: 'IV↓',    color: '#64748b88', desc: 'IV below B1, OI flat — supply building, writers active' },
+        ].map(function(d) {
           return (
-            <div key={s.range} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flex: 1, minWidth: 200 }}>
-              <div>
-                <p style={{ fontSize: 10, fontWeight: 700, color: s.color, margin: '0 0 2px' }}>{s.label} <span style={{ color: '#334155', fontWeight: 400 }}>· {s.range}</span></p>
-                <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>{s.desc}</p>
-              </div>
+            <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: d.color, padding: '1px 6px',
+                             background: d.color+'15', borderRadius: 3, border: '1px solid '+d.color+'44' }}>
+                {d.label}
+              </span>
+              <span style={{ fontSize: 10, color: '#475569' }}>{d.desc}</span>
             </div>
           );
         })}
       </div>
 
-      {/* Glossary */}
+      {/* ── Glossary ── */}
       <div style={{ borderTop: '1px solid #1e293b', padding: '12px 20px' }}>
-        <p style={{ fontSize: 10, fontWeight: 700, color: '#475569', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Glossary — tap any term to expand
+        <p style={{ fontSize: 10, fontWeight: 700, color: '#475569', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Glossary — tap to expand
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
-          {glossary.map(function(item, i) {
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 5 }}>
+          {[
+            { term: 'IV',        desc: 'Implied Volatility at this strike right now. Rising IV = premium being bid up = demand. Falling IV = premium being sold = supply.' },
+            { term: 'B1',        desc: 'IV deviation from the 10:00–10:15 settled baseline. Positive = IV above session start. Green = demand building vs whole day.' },
+            { term: 'B2',        desc: 'IV deviation from the rolling 45-min average. Positive = IV rising recently. Both B1 and B2 positive = sustained demand.' },
+            { term: 'COI',       desc: 'Change in Open Interest this snapshot. Fresh contracts entering. High positive COI with rising IV = genuine new buying.' },
+            { term: 'Cum OI',    desc: 'Total OI change from 9:15 open. Session-level picture — tells you how much position has built overall, not just this tick.' },
+            { term: 'OI',        desc: 'Total open interest at this strike. Large OI = institutionally significant level. Signals at high-OI strikes matter more.' },
+            { term: 'Driver',    desc: 'BUY: OI↑+IV↑ — buyer active. COVER: OI↓+IV↑ — writers exiting under pressure. WRITE: OI↑+IV↓ — writer active, avoid buying. UNWIND: OI↓+IV↓ — longs leaving.' },
+            { term: 'Confluence',desc: 'Multiple adjacent strikes showing the same buyer signal. 2+ strikes aligned = institutional zone, not single-strike noise. Confirmed = opposite side agrees.' },
+          ].map(function(item, i) {
             var isOpen = openGloss === i;
             return (
-              <div
-                key={i}
-                onClick={function() { setOpenGloss(isOpen ? null : i); }}
-                style={{ background: isOpen ? 'rgba(96,165,250,0.05)' : '#0f172a', border: '1px solid ' + (isOpen ? '#334155' : '#1e293b'), borderRadius: 8, padding: '8px 12px', cursor: 'pointer', transition: 'all 0.15s' }}
-              >
+              <div key={i} onClick={function() { setOpenGloss(isOpen ? null : i); }}
+                style={{ background: isOpen ? 'rgba(96,165,250,0.05)' : '#0f172a',
+                         border: '1px solid '+(isOpen ? '#334155' : '#1e293b'),
+                         borderRadius: 6, padding: '7px 10px', cursor: 'pointer', transition: 'all 0.15s' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: isOpen ? '#60a5fa' : '#94a3b8', fontFamily: 'monospace' }}>{item.term}</span>
-                    <span style={{ fontSize: 10, color: '#334155', marginLeft: 8 }}>{item.full}</span>
-                  </div>
-                  <span style={{ color: '#334155', fontSize: 11, marginLeft: 8 }}>{isOpen ? '−' : '+'}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: isOpen ? '#60a5fa' : '#94a3b8', fontFamily: 'monospace' }}>{item.term}</span>
+                  <span style={{ color: '#334155', fontSize: 11 }}>{isOpen ? '−' : '+'}</span>
                 </div>
-                {isOpen && (
-                  <p style={{ fontSize: 11, color: '#64748b', margin: '8px 0 0', lineHeight: 1.6, borderTop: '1px solid #1e293b', paddingTop: 8 }}>
-                    {item.desc}
-                  </p>
-                )}
+                {isOpen && <p style={{ fontSize: 11, color: '#64748b', margin: '6px 0 0', lineHeight: 1.6, borderTop: '1px solid #1e293b', paddingTop: 6 }}>{item.desc}</p>}
               </div>
             );
           })}
         </div>
-        <p style={{ fontSize: 10, color: '#334155', margin: '12px 0 0', lineHeight: 1.6 }}>
-          ⚠ PPI is an anomaly detector, not a prediction engine. High PPI = observable positioning pressure consistent with institutional-scale activity. Combine with price context, key levels, and news before acting. IV + OI cannot confirm buyer vs writer without direct order flow data.
-        </p>
       </div>
 
     </div>
@@ -2931,7 +3882,13 @@ function vwapSigCol(sig) {
 }
 
 function IntradayTable(props) {
-  var history = props.history || [];
+  var history     = props.history     || [];
+  var strikeRange = props.strikeRange || 'full';
+  var atm         = props.atm         || 0;
+  var symbol      = props.symbol      || 'NIFTY';
+  var step        = symbol === 'BANKNIFTY' ? 100 : 50;
+  var isFiltered  = strikeRange !== 'full' && atm > 0;
+  var rangeN      = isFiltered ? parseInt(strikeRange, 10) : 0;
 
   if (history.length === 0) {
     return (
@@ -2964,6 +3921,40 @@ function IntradayTable(props) {
     return (n > 0 ? '+' : '') + n;
   }
 
+  // Recompute totals from per-strike breakdown if filter is active
+  function computeRow(snap) {
+    if (!isFiltered || !snap.strikes || !Object.keys(snap.strikes).length) {
+      return {
+        call_vol: snap.call_vol || 0,
+        put_vol:  snap.put_vol  || 0,
+        diff:     snap.diff     || 0,
+        pcr:      snap.pcr      || 0,
+        pcr_coi:  snap.pcr_coi  || 0,
+      };
+    }
+    var snapAtm = snap.atm || atm;
+    var lo = snapAtm - rangeN * step;
+    var hi = snapAtm + rangeN * step;
+    var ce_vol = 0, pe_vol = 0, ce_coi = 0, pe_coi = 0, ce_oi = 0, pe_oi = 0;
+    Object.keys(snap.strikes).forEach(function(k) {
+      var s = parseInt(k, 10);
+      if (s < lo || s > hi) return;
+      var r = snap.strikes[k];
+      ce_vol += (r.ce_vol    || 0);
+      pe_vol += (r.pe_vol    || 0);
+      ce_coi += (r.ce_chg_oi || 0);
+      pe_coi += (r.pe_chg_oi || 0);
+      ce_oi  += (r.ce_oi     || 0);
+      pe_oi  += (r.pe_oi     || 0);
+    });
+    var diff    = pe_vol - ce_vol;
+    var pcr     = ce_oi  > 0 ? Math.round((pe_oi  / ce_oi)  * 100) / 100 : 0;
+    var pcr_coi = ce_coi > 0 ? Math.round((pe_coi / ce_coi) * 100) / 100 : 0;
+    return { call_vol: ce_vol, put_vol: pe_vol, diff: diff, pcr: pcr, pcr_coi: pcr_coi };
+  }
+
+  var rangeLabel = isFiltered ? 'ATM ±' + rangeN + ' · ' + (rangeN*2+1) + ' strikes' : 'Full Chain';
+
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b',
@@ -2975,7 +3966,16 @@ function IntradayTable(props) {
             {history.length} readings · newest first · every 3 min
           </p>
         </div>
-        <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>USE DATA AFTER 10:30 AM</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isFiltered && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#60a5fa',
+                           padding: '2px 8px', borderRadius: 4,
+                           background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.3)' }}>
+              {rangeLabel}
+            </span>
+          )}
+          <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>USE DATA AFTER 10:30 AM</span>
+        </div>
       </div>
 
       <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
@@ -2992,7 +3992,7 @@ function IntradayTable(props) {
               <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>PCR</th>
               <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>
                 PCR (COI)
-                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>Full Chain</span>
+                <span style={{ display: 'block', fontSize: 9, color: '#475569', fontWeight: 400 }}>{rangeLabel}</span>
               </th>
               <th style={{ padding: '8px 14px', color: '#94a3b8', textAlign: 'center', fontWeight: 600,
                            borderLeft: '1px solid #334155' }}>Option Signal</th>
@@ -3004,20 +4004,31 @@ function IntradayTable(props) {
           </thead>
           <tbody>
             {history.map(function(snap, i) {
+              var row        = computeRow(snap);
               var isFirst    = i === 0;
               var prev       = history[i + 1];
-              var diffVal    = snap.diff || 0;
-              var pcrUp      = prev && snap.pcr > prev.pcr;
-              var pcrDown    = prev && snap.pcr < prev.pcr;
+              var prevRow    = prev ? computeRow(prev) : null;
+              var diffVal    = row.diff;
+              var pcrUp      = prevRow && row.pcr > prevRow.pcr;
+              var pcrDown    = prevRow && row.pcr < prevRow.pcr;
               var pcrArrow   = pcrUp ? ' ↑' : pcrDown ? ' ↓' : '';
-              var pcrCol     = snap.pcr > 1.2 ? '#4ade80' : snap.pcr < 0.8 ? '#f87171' : '#f59e0b';
-              var coiPcr     = snap.pcr_coi || 0;
+              var pcrCol     = row.pcr > 1.2 ? '#4ade80' : row.pcr < 0.8 ? '#f87171' : '#f59e0b';
+              var coiPcr     = row.pcr_coi;
               var coiPcrCol  = coiPcr > 1.2 ? '#4ade80' : coiPcr > 0 && coiPcr < 0.8 ? '#f87171' : '#f59e0b';
-              var coiPcrUp   = prev && coiPcr > (prev.pcr_coi || 0);
-              var coiPcrDown = prev && coiPcr < (prev.pcr_coi || 0);
+              var coiPcrUp   = prevRow && coiPcr > prevRow.pcr_coi;
+              var coiPcrDown = prevRow && coiPcr < prevRow.pcr_coi;
               var coiArrow   = coiPcrUp ? ' ↑' : coiPcrDown ? ' ↓' : '';
               var diffCol    = diffVal > 0 ? '#4ade80' : diffVal < 0 ? '#f87171' : '#64748b';
               var priceCol   = snap.price > snap.vwap ? '#4ade80' : snap.price < snap.vwap ? '#f87171' : '#f1f5f9';
+
+              // Recompute option signal from filtered values
+              var optSig = snap.opt_signal;
+              if (isFiltered) {
+                optSig = (coiPcr > 1.2 && row.put_vol > row.call_vol) ? 'BUY'
+                       : (coiPcr < 0.8 && coiPcr > 0 && row.call_vol > row.put_vol) ? 'SELL'
+                       : 'NEUTRAL';
+              }
+
               return (
                 <tr key={i} style={{
                   background:   isFirst ? 'rgba(96,165,250,0.07)' : 'transparent',
@@ -3029,11 +4040,11 @@ function IntradayTable(props) {
                     {fmtTime(snap.time)}
                     {isFirst && <span style={{ display: 'block', fontSize: 8, color: '#4ade80', fontWeight: 700 }}>LATEST</span>}
                   </td>
-                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#f87171', fontWeight: 600 }}>{fmtN(snap.call_vol)}</td>
-                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#4ade80', fontWeight: 600 }}>{fmtN(snap.put_vol)}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#f87171', fontWeight: 600 }}>{fmtN(row.call_vol)}</td>
+                  <td style={{ padding: '9px 14px', textAlign: 'right', color: '#4ade80', fontWeight: 600 }}>{fmtN(row.put_vol)}</td>
                   <td style={{ padding: '9px 14px', textAlign: 'right', color: diffCol, fontWeight: 700 }}>{fmtDiffN(diffVal)}</td>
                   <td style={{ padding: '9px 14px', textAlign: 'center', color: pcrCol, fontWeight: 700 }}>
-                    {snap.pcr}
+                    {row.pcr > 0 ? row.pcr.toFixed(2) : '—'}
                     <span style={{ fontSize: 10, color: pcrUp ? '#4ade80' : pcrDown ? '#f87171' : '#64748b' }}>{pcrArrow}</span>
                   </td>
                   <td style={{ padding: '9px 14px', textAlign: 'center', color: coiPcrCol, fontWeight: 700 }}>
@@ -3041,7 +4052,7 @@ function IntradayTable(props) {
                     <span style={{ fontSize: 10, color: coiPcrUp ? '#4ade80' : coiPcrDown ? '#f87171' : '#64748b' }}>{coiArrow}</span>
                   </td>
                   <td style={{ padding: '9px 14px', textAlign: 'center', borderLeft: '1px solid #1e293b' }}>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: vwapSigCol(snap.opt_signal) }}>{snap.opt_signal}</span>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: vwapSigCol(optSig) }}>{optSig}</span>
                   </td>
                   <td style={{ padding: '9px 14px', textAlign: 'right', color: '#60a5fa', fontWeight: 600,
                                borderLeft: '1px solid #1e293b' }}>{snap.vwap || '—'}</td>
@@ -3815,6 +4826,7 @@ export default function Options() {
   var intervalRef                 = useRef(null);
   var dashIntervalRef             = useRef(null);
   var [dashData, setDashData]     = useState(null);
+  var [strikeRange, setStrikeRange] = useState('full'); // 'full' | '1'..'15'
 
   useEffect(function() {
     try { localStorage.setItem(_alertKey, JSON.stringify(alerts.slice(0,200))); }
@@ -3908,6 +4920,48 @@ export default function Options() {
       clearInterval(dashIntervalRef.current);
     };
   }, [symbol, hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Strike range filter — compute filtered OIBar data from full_chain ──────
+  var filteredData = React.useMemo(function() {
+    if (!data) return data;
+    var fullChain = data.full_chain || data.chain || [];
+    var atm       = data.atm_strike || 0;
+    if (strikeRange === 'full' || !atm || !fullChain.length) return data;
+
+    var range = parseInt(strikeRange, 10);
+    var step  = symbol === 'BANKNIFTY' ? 100 : 50;
+    var lo    = atm - range * step;
+    var hi    = atm + range * step;
+    var filtered = fullChain.filter(function(r) {
+      return r.strike >= lo && r.strike <= hi;
+    });
+
+    var total_ce_oi  = 0, total_pe_oi  = 0;
+    var total_ce_vol = 0, total_pe_vol = 0;
+    var total_ce_coi = 0, total_pe_coi = 0;
+    filtered.forEach(function(r) {
+      total_ce_oi  += (r.ce_oi      || 0);
+      total_pe_oi  += (r.pe_oi      || 0);
+      total_ce_vol += (r.ce_vol     || 0);
+      total_pe_vol += (r.pe_vol     || 0);
+      total_ce_coi += (r.ce_chg_oi  || 0);
+      total_pe_coi += (r.pe_chg_oi  || 0);
+    });
+
+    var pcr_total = total_ce_oi > 0 ? Math.round((total_pe_oi / total_ce_oi) * 100) / 100 : 0;
+    var sentiment = pcr_total > 1.2 ? 'Bullish' : pcr_total < 0.8 ? 'Bearish' : 'Neutral';
+
+    return Object.assign({}, data, {
+      total_ce_oi:   total_ce_oi,
+      total_pe_oi:   total_pe_oi,
+      total_ce_vol:  total_ce_vol,
+      total_pe_vol:  total_pe_vol,
+      total_ce_coi:  total_ce_coi,
+      total_pe_coi:  total_pe_coi,
+      pcr_total:     pcr_total,
+      sentiment_total: sentiment,
+    });
+  }, [data, strikeRange, symbol]);
 
   if (!hasOptions) {
     return (
@@ -4046,9 +5100,58 @@ export default function Options() {
             <UnwindAlerts alerts={data.unwind_alerts} />
           )}
 
-          <IntradayTable history={dashData ? (dashData.intraday_history || []) : []} />
+          {/* ── Strike Range Filter ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                        padding: '10px 16px', background: '#0f172a',
+                        border: '1px solid #1e293b', borderRadius: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#475569',
+                           textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Strike Range
+            </span>
+            {['full', '1','2','3','4','5','6','7','8','9','10','11','12','13','14','15'].map(function(v) {
+              var isActive = strikeRange === v;
+              var label    = v === 'full' ? 'Full Chain' : 'ATM ±' + v;
+              return (
+                <button key={v} onClick={function() { setStrikeRange(v); }}
+                  style={{
+                    padding:      '4px 12px',
+                    borderRadius: 6,
+                    border:       '1px solid ' + (isActive ? '#60a5fa' : '#1e293b'),
+                    background:   isActive ? '#60a5fa18' : 'transparent',
+                    color:        isActive ? '#60a5fa' : '#475569',
+                    fontSize:     11,
+                    fontWeight:   isActive ? 700 : 500,
+                    cursor:       'pointer',
+                    whiteSpace:   'nowrap',
+                    transition:   'all 0.12s',
+                  }}>
+                  {label}
+                </button>
+              );
+            })}
+            {strikeRange !== 'full' && (
+              <span style={{ fontSize: 10, color: '#334155', marginLeft: 4 }}>
+                · {parseInt(strikeRange)*2+1} strikes · {symbol === 'BANKNIFTY' ? 'step 100' : 'step 50'}
+              </span>
+            )}
+          </div>
 
-          <OIBar data={data} />
+          <IntradayTable
+            history={dashData ? (dashData.intraday_history || []) : []}
+            strikeRange={strikeRange}
+            atm={data ? (data.atm_strike || 0) : 0}
+            symbol={symbol}
+          />
+
+          <OIBar data={filteredData || data} />
+
+          <PCRChart
+            candles={symbol === 'NIFTY' ? (overview['nifty_candles'] || []) : (overview['banknifty_candles'] || [])}
+            pcrHistory={data.pcr_intraday_3m || []}
+            dashHist={dashData ? (dashData.intraday_history || []) : []}
+            symbol={symbol}
+          />
+
           <ZoneSplit
             chain={data.chain || []}
             atm={data.atm_strike || 0}

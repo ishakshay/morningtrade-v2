@@ -14,6 +14,7 @@ import AuthSuccess from './pages/AuthSuccess';
 import IndicesTicker from './components/IndicesTicker';
 import News from './pages/News';
 import FuturesPage from './pages/FuturesPage';
+import ScannerPage from './pages/ScannerPage';
 
 
 function FooterDisclaimer() {
@@ -78,6 +79,12 @@ function Sidebar({ collapsed, setCollapsed }) {
         { to: '/options',      label: 'Options Analysis' },
         { to: '/option-chain', label: 'Option Chain'     },
         { to: '/futures',      label: 'Futures'          },
+      ],
+    },
+    {
+      label: 'Scanner',
+      links: [
+        { to: '/scanner', label: 'MTF Scanner' },
       ],
     },
     {
@@ -306,6 +313,7 @@ function AppLayout() {
               <Route path="/option-chain"   element={<OptionChain />}  />
               <Route path="/futures"        element={<FuturesPage />}  />
               <Route path="/news"           element={<News />}         />
+              <Route path="/scanner"        element={<ScannerPage />}  />
             </Routes>
           </div>
           <FooterDisclaimer />

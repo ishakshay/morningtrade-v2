@@ -5,6 +5,7 @@ import math
 _nse              = None
 _intraday_history = {}
 _vwap_state       = {}
+_last_fut_vol     = {}  # cumulative vol tracker for delta calculation
 
 def get_nse():
     global _nse
@@ -42,16 +43,25 @@ def update_vwap(symbol, price, total_vol_today):
         return round(state['cum_pv'] / state['cum_vol'], 2)
     return round(price, 2)
 
-def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap, pcr_coi=0):
-    global _intraday_history
-    today   = date.today().isoformat()
-    _now    = datetime.now()
+def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap, pcr_coi=0, fut_vol=0, strikes_data=None, atm_strike=0):
+    global _intraday_history, _last_fut_vol
+    today        = date.today().isoformat()
+    _now         = datetime.now()
     bucketed_min = (_now.minute // 3) * 3
-    now_str = _now.strftime('%H') + str(bucketed_min).zfill(2)
+    now_str      = _now.strftime('%H') + str(bucketed_min).zfill(2)
+
     if symbol not in _intraday_history:
         _intraday_history[symbol] = {'date': today, 'snapshots': []}
     if _intraday_history[symbol]['date'] != today:
         _intraday_history[symbol] = {'date': today, 'snapshots': []}
+        _last_fut_vol[symbol]     = 0   # reset on new day
+
+    # Delta volume: how many contracts traded since last snapshot
+    prev_cum  = _last_fut_vol.get(symbol, 0)
+    vol_delta = max(0, fut_vol - prev_cum) if fut_vol > 0 and prev_cum > 0 else 0
+    if fut_vol > 0:
+        _last_fut_vol[symbol] = fut_vol
+
     diff = put_vol - call_vol
     if pcr_coi > 1.2:
         opt_signal = 'BUY'
@@ -60,31 +70,56 @@ def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap, pc
     else:
         opt_signal = 'NEUTRAL'
     if fut_ltp and fut_vwap:
-        if fut_ltp > fut_vwap:
-            vwap_signal = 'BUY'
-        elif fut_ltp < fut_vwap:
-            vwap_signal = 'SELL'
-        else:
-            vwap_signal = 'NEUTRAL'
+        vwap_signal = 'BUY' if fut_ltp > fut_vwap else 'SELL' if fut_ltp < fut_vwap else 'NEUTRAL'
     else:
         vwap_signal = 'NEUTRAL'
-    snap = {
-        'time':        now_str,
-        'call_vol':    call_vol,
-        'put_vol':     put_vol,
-        'diff':        diff,
-        'pcr':         round(pcr, 2),
-        'pcr_coi':     round(pcr_coi, 2),
-        'opt_signal':  opt_signal,
-        'vwap':        fut_vwap,
-        'price':       fut_ltp,
-        'vwap_signal': vwap_signal,
-    }
+
     snaps = _intraday_history[symbol]['snapshots']
     if snaps and snaps[-1]['time'] == now_str:
-        snaps[-1] = snap
+        # Same 3-min bucket — update OHLC, accumulate volume
+        prev = snaps[-1]
+        snaps[-1] = {
+            'time':        now_str,
+            'open':        prev.get('open', fut_ltp),
+            'high':        max(prev.get('high', fut_ltp), fut_ltp),
+            'low':         min(prev.get('low',  fut_ltp), fut_ltp),
+            'close':       fut_ltp,
+            'price':       fut_ltp,
+            'call_vol':    call_vol,
+            'put_vol':     put_vol,
+            'diff':        diff,
+            'pcr':         round(pcr, 2),
+            'pcr_coi':     round(pcr_coi, 2),
+            'opt_signal':  opt_signal,
+            'vwap':        fut_vwap,
+            'vwap_signal': vwap_signal,
+            'fut_vol':     prev.get('fut_vol', 0) + vol_delta,
+            'strikes':     strikes_data or prev.get('strikes', {}),
+            'atm':         atm_strike or prev.get('atm', 0),
+        }
     else:
-        snaps.append(snap)
+        # New 3-min bucket — open = previous close for connected candles
+        prev_close = snaps[-1].get('close', fut_ltp) if snaps else fut_ltp
+        snaps.append({
+            'time':        now_str,
+            'open':        prev_close,
+            'high':        fut_ltp,
+            'low':         fut_ltp,
+            'close':       fut_ltp,
+            'price':       fut_ltp,
+            'call_vol':    call_vol,
+            'put_vol':     put_vol,
+            'diff':        diff,
+            'pcr':         round(pcr, 2),
+            'pcr_coi':     round(pcr_coi, 2),
+            'opt_signal':  opt_signal,
+            'vwap':        fut_vwap,
+            'vwap_signal': vwap_signal,
+            'fut_vol':     vol_delta,
+            'strikes':     strikes_data or {},
+            'atm':         atm_strike,
+        })
+
     if len(snaps) > 130:
         _intraday_history[symbol]['snapshots'] = snaps[-130:]
 
@@ -262,6 +297,20 @@ def fetch_dashboard(symbol, options_data):
         ce_coi   = options_data.get('total_ce_coi', 0) or 0
         pe_coi   = options_data.get('total_pe_coi', 0) or 0
         pcr_coi  = round(pe_coi / ce_coi, 2) if ce_coi != 0 else 0
+        # Build compact per-strike data for range filtering in frontend
+        strikes_data = {}
+        chain = options_data.get('full_chain_payload', {}).get('chain') or options_data.get('chain', [])
+        for row in chain:
+            s = row.get('strike')
+            if s:
+                strikes_data[str(s)] = {
+                    'ce_vol':    row.get('ce_vol',    0),
+                    'pe_vol':    row.get('pe_vol',    0),
+                    'ce_chg_oi': row.get('ce_chg_oi', 0),
+                    'pe_chg_oi': row.get('pe_chg_oi', 0),
+                    'ce_oi':     row.get('ce_oi',     0),
+                    'pe_oi':     row.get('pe_oi',     0),
+                }
         save_intraday_snapshot(
             symbol,
             options_data.get('total_ce_vol', 0),
@@ -270,6 +319,9 @@ def fetch_dashboard(symbol, options_data):
             futures_info.get('fut_ltp', 0),
             futures_info.get('fut_vwap', 0),
             pcr_coi,
+            futures_info.get('fut_vol', 0),
+            strikes_data,
+            options_data.get('atm_strike', 0),
         )
     return {
         'symbol':           symbol,

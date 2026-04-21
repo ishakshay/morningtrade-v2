@@ -37,7 +37,7 @@ def safe_int(val, default=0):
     except:
         return default
 
-def save_strike_pcr_snapshot(symbol, five_strike_rows):
+def save_strike_pcr_snapshot(symbol, chain_rows):
     global _strike_pcr_hist
     today   = date.today().isoformat()
     now_str = datetime.now().strftime('%H:%M')
@@ -46,7 +46,7 @@ def save_strike_pcr_snapshot(symbol, five_strike_rows):
     if _strike_pcr_hist[symbol]['date'] != today:
         _strike_pcr_hist[symbol] = {'date': today, 'snapshots': []}
     snapshot = {'time': now_str, 'strikes': {}}
-    for row in five_strike_rows:
+    for row in chain_rows:
         strike = row.get('strike')
         if strike:
             ce_vol   = row.get('ce_vol') or 0
@@ -61,6 +61,10 @@ def save_strike_pcr_snapshot(symbol, five_strike_rows):
                 'vol_diff': vol_diff,
                 'ce_coi':   row.get('ce_chg_oi') or 0,
                 'pe_coi':   row.get('pe_chg_oi') or 0,
+                'ce_iv':    round(row.get('ce_iv') or 0, 2),
+                'pe_iv':    round(row.get('pe_iv') or 0, 2),
+                'ce_oi':    ce_oi,
+                'pe_oi':    pe_oi,
             }
     _strike_pcr_hist[symbol]['snapshots'].append(snapshot)
     if len(_strike_pcr_hist[symbol]['snapshots']) > 130:
@@ -99,7 +103,7 @@ def fetch_option_chain(symbol):
             save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
             result['pcr_history'] = get_pcr_history(symbol)
 
-            save_strike_pcr_snapshot(symbol, result.get('five_strike_rows', []))
+            save_strike_pcr_snapshot(symbol, result.get('chain', result.get('five_strike_rows', [])))
             result['strike_pcr_history'] = get_strike_pcr_history(symbol)
 
             try:
@@ -124,7 +128,7 @@ def fetch_option_chain(symbol):
 
             try:
                 from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
-                save_pcr_intraday(symbol, result['pcr_3strike'], result.get('three_ce_coi', 0), result.get('three_pe_coi', 0))
+                save_pcr_intraday(symbol, result['pcr_total'], result.get('total_ce_coi', 0), result.get('total_pe_coi', 0))
                 result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
                 result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
                 result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
