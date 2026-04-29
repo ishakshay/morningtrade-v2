@@ -103,7 +103,11 @@ def fetch_option_chain(symbol):
             save_pcr_snapshot(symbol, result['pcr_total'], result['pcr_atm'], result['pcr_5strike'])
             result['pcr_history'] = get_pcr_history(symbol)
 
-            save_strike_pcr_snapshot(symbol, result.get('chain', result.get('five_strike_rows', [])))
+            # Use full_chain_payload.chain (all strikes) for snapshot — most complete data
+            _full_chain_rows = (result.get('full_chain_payload') or {}).get('chain', [])
+            if not _full_chain_rows:
+                _full_chain_rows = result.get('full_chain', result.get('chain', result.get('five_strike_rows', [])))
+            save_strike_pcr_snapshot(symbol, _full_chain_rows)
             result['strike_pcr_history'] = get_strike_pcr_history(symbol)
 
             try:
@@ -128,7 +132,7 @@ def fetch_option_chain(symbol):
 
             try:
                 from screeners.nse_market import save_pcr_intraday, get_pcr_intraday
-                save_pcr_intraday(symbol, result['pcr_total'], result.get('total_ce_coi', 0), result.get('total_pe_coi', 0))
+                save_pcr_intraday(symbol, result['pcr_3strike'], result.get('three_ce_coi', 0), result.get('three_pe_coi', 0))
                 result['pcr_intraday_3m']  = get_pcr_intraday(symbol, 3)
                 result['pcr_intraday_9m']  = get_pcr_intraday(symbol, 9)
                 result['pcr_intraday_15m'] = get_pcr_intraday(symbol, 15)
@@ -148,6 +152,8 @@ def fetch_option_chain(symbol):
             full = result.get('full_chain_payload')
             if full:
                 save_full_chain(symbol, full)
+                # Attach full_chain directly from payload — always fresh, not from cache
+                result['full_chain'] = full.get('chain', [])
                 del result['full_chain_payload']
 
             print(f"  [nse_options] {symbol} spot:{result['spot_price']} pcr_total:{result['pcr_total']} pcr_3s:{result['pcr_3strike']} S1:{result['support']} R1:{result['resistance']} iv:{len(result['iv_history'])}")

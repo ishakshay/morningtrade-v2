@@ -143,8 +143,8 @@ def save_pcr_intraday(symbol, pcr, ce_coi, pe_coi):
         'pe_coi':  pe_coi,
         'signal':  signal,
     })
-    if len(bucket['snapshots']) > 200:
-        bucket['snapshots'] = bucket['snapshots'][-200:]
+    if len(bucket['snapshots']) > 400:
+        bucket['snapshots'] = bucket['snapshots'][-400:]
 
 def get_pcr_intraday(symbol, interval_mins=3):
     today  = date.today().isoformat()
@@ -153,10 +153,11 @@ def get_pcr_intraday(symbol, interval_mins=3):
         return []
     snaps = bucket.get('snapshots', [])
     if interval_mins <= 3:
-        return list(reversed(snaps[-30:]))
+        # Return ALL snapshots newest-first for full-day PCR chart
+        return list(reversed(snaps))
     step     = interval_mins // 3
     filtered = snaps[::step]
-    return list(reversed(filtered[-30:]))
+    return list(reversed(filtered))
 
 def fetch_crude():
     try:

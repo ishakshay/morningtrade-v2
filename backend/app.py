@@ -23,6 +23,8 @@ from screeners.nse_options import get_strike_pcr_history
 from screeners.news_feed import fetch_all_feeds, get_cached_news, get_nse_announcements
 from screeners.nse_futures import poll_futures_sentiment, update_latest, get_latest
 from screeners.nse_gamma import compute_gamma_blast
+from screeners.volume_analytics import compute as compute_volume_analytics
+from tv_webhook import register_tv_webhook
 
 EOD_EXPORT_DIR = os.path.join(os.path.dirname(__file__), 'eod_exports')
 os.makedirs(EOD_EXPORT_DIR, exist_ok=True)
@@ -186,7 +188,73 @@ def export_eod_spreadsheet():
         for i in range(1, len(base_headers) + 1):
             ws.column_dimensions[get_column_letter(i)].width = 10
 
-    # ── Sheet 4: VIX History ──────────────────────────────────────────────────
+    # ── Sheet 4: Strike IV History — NIFTY + BANKNIFTY ───────────────────────
+    # Per-strike IV (CE/PE) for ATM ±5, captured every 3 min throughout the session.
+    for symbol in ['NIFTY', 'BANKNIFTY']:
+        ws = wb.create_sheet(f'Strike IV {symbol}')
+
+        snaps = _strike_iv_history.get(symbol, [])
+        if not snaps:
+            ws.append([f'No strike IV data captured for {symbol} on {today}'])
+            continue
+
+        # Use the LATEST snapshot to determine column order (handles ATM drift mid-session)
+        latest_strikes = sorted(int(s) for s in snaps[-1].get('strikes', {}).keys())
+
+        # Headers: Time | Spot | VIX | ATM | <strike> CE IV | <strike> PE IV | <strike> CE LTP | <strike> PE LTP | ...
+        base_headers = ['Time', 'Spot', 'VIX', 'ATM']
+        base_fills   = [hdr_fill_nt, hdr_fill_nt, hdr_fill_vx, hdr_fill_nt]
+        for strike in latest_strikes:
+            base_headers += [f'{strike} CE IV', f'{strike} PE IV', f'{strike} CE LTP', f'{strike} PE LTP']
+            base_fills   += [hdr_fill_ce, hdr_fill_pe, hdr_fill_ce, hdr_fill_pe]
+
+        write_sheet_header(ws, f'Strike IV History (ATM±5) — {symbol} — {today}', base_headers, base_fills)
+
+        for snap in snaps:
+            row_data = [
+                snap.get('time', ''),
+                snap.get('spot', ''),
+                snap.get('vix', ''),
+                snap.get('atm', ''),
+            ]
+            for strike in latest_strikes:
+                entry = snap.get('strikes', {}).get(strike) or snap.get('strikes', {}).get(str(strike)) or {}
+                row_data += [
+                    entry.get('ce_iv', ''),
+                    entry.get('pe_iv', ''),
+                    entry.get('ce_ltp', ''),
+                    entry.get('pe_ltp', ''),
+                ]
+            ws.append(row_data)
+
+        # Style data rows
+        for r in ws.iter_rows(min_row=4, max_row=ws.max_row):
+            for c in r:
+                style_data(c)
+
+        # Highlight ATM column for each row by tinting the cell background lightly
+        atm_highlight = PatternFill('solid', start_color='FFF4D6')
+        for r_idx, snap in enumerate(snaps, start=4):
+            row_atm = snap.get('atm')
+            if not row_atm:
+                continue
+            try:
+                col_offset = latest_strikes.index(int(row_atm))   # 0-based position within strike list
+            except ValueError:
+                continue
+            # Each strike occupies 4 columns starting at col 5 (1-indexed)
+            for c_idx in range(5 + col_offset * 4, 5 + col_offset * 4 + 4):
+                ws.cell(row=r_idx, column=c_idx).fill = atm_highlight
+
+        # Column widths
+        ws.column_dimensions['A'].width = 8
+        ws.column_dimensions['B'].width = 10
+        ws.column_dimensions['C'].width = 8
+        ws.column_dimensions['D'].width = 10
+        for i in range(5, len(base_headers) + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 10
+
+    # ── Sheet 5: VIX History ──────────────────────────────────────────────────
     ws_vix = wb.create_sheet('VIX History')
     headers = ['Time', 'VIX Value']
     fills   = [hdr_fill_nt, hdr_fill_vx]
@@ -243,6 +311,7 @@ def refresh_news():
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
+register_tv_webhook(app)
 
 @app.route('/api/news')
 def get_news():
@@ -269,6 +338,8 @@ _options_cache    = {}
 _market_cache     = {}
 _gamma_cache      = {}
 _prev_pcr_3strike = {}
+_prev_chain_cache = {}   # holds previous /api/option-chain snapshot per symbol for volume delta computation
+_strike_iv_history = {'NIFTY': [], 'BANKNIFTY': []}   # rolling per-strike IV snapshots for ATM±5, capped at 130 per symbol (full session)
 
 def sanitize(obj):
     if isinstance(obj, float):
@@ -322,6 +393,106 @@ def refresh_market_overview():
             print(f"  [market_overview] failed: {e}")
         time.sleep(180)
 
+def refresh_candles():
+    """Refresh Nifty/BankNifty OHLC candles every 3 minutes during market hours."""
+    from screeners.nse_market import fetch_candles
+    while True:
+        try:
+            nifty_c = fetch_candles('^NSEI')
+            bn_c    = fetch_candles('^NSEBANK')
+            if nifty_c:
+                _market_cache['nifty_candles']    = nifty_c
+            if bn_c:
+                _market_cache['banknifty_candles'] = bn_c
+        except Exception as e:
+            print(f"  [candles] failed: {e}")
+        time.sleep(180)
+
+def _snapshot_strike_iv(symbol, full_chain_data):
+    """
+    Capture per-strike IV (CE/PE) for ATM ±5 strikes from current chain data.
+    Stores in _strike_iv_history[symbol] for retrieval and EOD export.
+    """
+    if not full_chain_data:
+        return
+    chain = full_chain_data.get('full_chain') or full_chain_data.get('chain') or []
+    spot  = full_chain_data.get('spot_price', 0)
+    atm   = full_chain_data.get('atm_strike', 0)
+    if not chain or not atm:
+        return
+
+    # Infer strike step (50 NIFTY, 100 BANKNIFTY)
+    sorted_strikes = sorted({r.get('strike', 0) for r in chain if r.get('strike')})
+    step = 100 if symbol == 'BANKNIFTY' else 50
+    if len(sorted_strikes) >= 2:
+        diffs = [sorted_strikes[i+1] - sorted_strikes[i] for i in range(len(sorted_strikes)-1)]
+        diffs = [d for d in diffs if d > 0]
+        if diffs:
+            step = min(diffs)
+
+    # Build {strike: {ce_iv, pe_iv, ce_ltp, pe_ltp}} for ATM±5
+    strikes_obj = {}
+    for k in range(-5, 6):
+        s = atm + k * step
+        match = next((r for r in chain if r.get('strike') == s), None)
+        if match:
+            strikes_obj[s] = {
+                'ce_iv':  match.get('ce_iv', 0)  or 0,
+                'pe_iv':  match.get('pe_iv', 0)  or 0,
+                'ce_ltp': match.get('ce_ltp', 0) or 0,
+                'pe_ltp': match.get('pe_ltp', 0) or 0,
+            }
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(ist)
+    time_str = now.strftime('%H:%M')
+
+    # Get current VIX from market overview.
+    # _market_cache is populated by refresh_market_overview() via _market_cache.update(result),
+    # so VIX lives at _market_cache['VIX'], not _market_cache['overview']['VIX'].
+    # Fallback: if market overview hasn't populated yet (first few minutes after startup),
+    # pull VIX from the latest iv_history entry which is captured on the same poll cycle.
+    vix_val = 0
+    try:
+        vix_val = (_market_cache.get('VIX') or {}).get('last', 0) or 0
+    except Exception:
+        vix_val = 0
+    if not vix_val:
+        try:
+            iv_hist = get_iv_history(symbol) or []
+            if iv_hist:
+                vix_val = iv_hist[-1].get('vix', 0) or 0
+        except Exception:
+            pass
+
+    snap = {
+        'time':    time_str,
+        'spot':    spot,
+        'vix':     vix_val,
+        'atm':     atm,
+        'step':    step,
+        'strikes': strikes_obj,
+    }
+
+    history = _strike_iv_history.setdefault(symbol, [])
+
+    # Backfill vix=0 in any historical rows now that we have a valid VIX.
+    # This heals snapshots captured before refresh_market_overview populated _market_cache.
+    if vix_val:
+        for h in history:
+            if not h.get('vix'):
+                h['vix'] = vix_val
+
+    # Avoid duplicates within the same minute
+    if history and history[-1]['time'] == time_str:
+        history[-1] = snap   # update in place
+    else:
+        history.append(snap)
+        # Cap at 130 snapshots (~6.5 hours of 3-min polls = full session)
+        if len(history) > 130:
+            history.pop(0)
+
+
 def refresh_options():
     symbols = ['NIFTY', 'BANKNIFTY']
     while True:
@@ -332,6 +503,13 @@ def refresh_options():
                 if result:
                     _options_cache[symbol] = result
                     print(f"  [options] {symbol} done — PCR: {result.get('pcr_total')}")
+                    # Snapshot ATM±5 strike IVs into rolling history (used by frontend picker + EOD export)
+                    try:
+                        chain_data = get_full_chain(symbol)
+                        if chain_data:
+                            _snapshot_strike_iv(symbol, chain_data)
+                    except Exception as e:
+                        print(f"  [strike_iv] {symbol} snapshot failed: {e}")
                     try:
                         fut_payload = get_latest(symbol)
                         prev_pcr    = _prev_pcr_3strike.get(symbol)
@@ -481,6 +659,60 @@ def get_option_chain_full():
             return jsonify({'error': str(e)}), 500
     return jsonify(sanitize(data or {}))
 
+@app.route('/api/volume/analysis')
+def get_volume_analysis():
+    """
+    Returns enriched per-strike volume analytics for ATM ±10 strikes:
+      - V/OI ratios + buildup classification per side
+      - CE/PE volume split, churn %, dominant buildup
+      - Top 5 strikes by volume with smart-money score
+
+    Computed on-demand from current _options_cache and the previous snapshot
+    (held in _prev_chain_cache) to derive delta volume / delta OI per snapshot.
+    """
+    symbol = request.args.get('symbol', 'NIFTY').upper()
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
+        return jsonify({'error': 'Invalid symbol'}), 400
+
+    data = get_full_chain(symbol)
+    if not data:
+        try:
+            result = fetch_options(symbol)
+            if result:
+                _options_cache[symbol] = result
+                data = get_full_chain(symbol)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    if not data:
+        return jsonify({'error': 'No chain data available'}), 503
+
+    prev = _prev_chain_cache.get(symbol)
+
+    try:
+        analysis = compute_volume_analytics(data, prev)
+    except Exception as e:
+        print(f"  [volume] {symbol} compute failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+    # Update prev cache AFTER computation so the next call uses this snapshot as prev
+    _prev_chain_cache[symbol] = data
+
+    return jsonify(sanitize(analysis or {}))
+
+@app.route('/api/strike-iv-history')
+def get_strike_iv_history_route():
+    """
+    Returns rolling per-strike IV history for ATM±5 strikes.
+    Captured every 3 min by refresh_options() — same cadence as the option chain.
+    Used by the IV Spread + Demand table's strike picker on the frontend.
+    """
+    symbol = request.args.get('symbol', 'NIFTY').upper()
+    if symbol not in ['NIFTY', 'BANKNIFTY']:
+        return jsonify({'error': 'Invalid symbol'}), 400
+    history = _strike_iv_history.get(symbol, [])
+    return jsonify(sanitize({'history': history}))
+
 @app.route('/api/gamma-blast')
 def get_gamma_blast():
     symbol = request.args.get('symbol', 'NIFTY').upper()
@@ -588,4 +820,6 @@ if __name__ == '__main__':
     t_fd.start()
     t_eod = threading.Thread(target=eod_scheduler, daemon=True)
     t_eod.start()
+    t_candles = threading.Thread(target=refresh_candles, daemon=True)
+    t_candles.start()
     app.run(port=3001, debug=False)

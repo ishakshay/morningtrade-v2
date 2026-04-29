@@ -622,6 +622,18 @@ function IVDashboard(props) {
   var history = props.history || [];
   var symbol  = props.symbol  || 'NIFTY';
   var tDays   = props.tDays;
+  var strikeIVHistory = props.strikeIVHistory || [];
+  var atm             = props.atm || 0;
+
+  // Strike picker state — default to ATM, persists across renders
+  var [selectedStrike, setSelectedStrike] = React.useState(0);
+
+  // Auto-set selectedStrike to ATM when ATM first becomes available, or when it shifts
+  React.useEffect(function() {
+    if (atm && (!selectedStrike || Math.abs(selectedStrike - atm) > 500)) {
+      setSelectedStrike(atm);
+    }
+  }, [atm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (history.length < 2) {
     return (
@@ -811,18 +823,131 @@ function IVDashboard(props) {
 
       {/* IV Spread + Demand — Full Day Table */}
       {(function() {
-        if (history.length < 2) return null;
+        // ── Build the strike list (ATM±5) and pick the right data source ──
+        var step = 50;
+        if (strikeIVHistory.length > 0 && strikeIVHistory[strikeIVHistory.length - 1].step) {
+          step = strikeIVHistory[strikeIVHistory.length - 1].step;
+        } else if (symbol === 'BANKNIFTY') {
+          step = 100;
+        }
+        var strikeList = [];
+        if (atm) {
+          for (var k = -5; k <= 5; k++) strikeList.push(atm + k * step);
+        }
 
-        var rows = history.slice().reverse(); // newest first
+        var pickedStrike = selectedStrike || atm;
+        var isAtmSelected = !atm || pickedStrike === atm;
+
+        // Source rows: when ATM is selected, use original ATM-only history (it has spread/ratios pre-computed).
+        // When a non-ATM strike is selected, derive rows from strikeIVHistory.
+        var rows;
+        if (isAtmSelected) {
+          if (history.length < 2) return null;
+          rows = history.slice().reverse();
+        } else {
+          if (strikeIVHistory.length < 2) {
+            // Not enough per-strike data yet — show a warmup message
+            return (
+              <div style={{ padding: '14px 20px', borderTop: '1px solid #1e293b' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0,
+                               textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    IV Spread + Demand — Full Day · every 3 min
+                  </p>
+                  {strikeList.length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: 10, color: '#64748b', marginRight: 4, fontWeight: 600 }}>STRIKE</span>
+                      {strikeList.map(function(s) {
+                        var isAtm = s === atm;
+                        var isSel = s === pickedStrike;
+                        return (
+                          <button key={s} onClick={function() { setSelectedStrike(s); }}
+                            style={{
+                              background: isSel ? (isAtm ? '#f59e0b' : '#60a5fa') : '#1e293b',
+                              color: isSel ? '#0f172a' : (isAtm ? '#f59e0b' : '#94a3b8'),
+                              border: '1px solid ' + (isSel ? 'transparent' : (isAtm ? '#f59e0b44' : '#334155')),
+                              borderRadius: 4, padding: '4px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                              fontFamily: 'inherit', minWidth: 52, textAlign: 'center',
+                            }}>
+                            {s}{isAtm && <span style={{ marginLeft: 3, fontSize: 9 }}>●</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <p style={{ fontSize: 12, color: '#64748b', margin: 0, padding: '24px 0', textAlign: 'center' }}>
+                  Strike {pickedStrike} — collecting data ({strikeIVHistory.length}/2 readings). Updates every 3 minutes.
+                </p>
+              </div>
+            );
+          }
+          rows = strikeIVHistory.slice().reverse().map(function(snap) {
+            var s = snap.strikes && snap.strikes[pickedStrike];
+            // Put-call parity: CE and PE on the same strike+expiry have the same
+            // IV (theoretically). For deep ITM strikes the backend's IV solver
+            // often fails on the ITM side (strike below ATM → CE deep ITM →
+            // ce_iv missing; strike above ATM → PE deep ITM → pe_iv missing).
+            // Backfill the missing side using the OTM side's IV. Mark it so
+            // the cell renderer can show a small "parity" hint.
+            var rawCe = s ? (s.ce_iv || 0) : 0;
+            var rawPe = s ? (s.pe_iv || 0) : 0;
+            var ceFromParity = false, peFromParity = false;
+            if (rawCe <= 0 && rawPe > 0) { rawCe = rawPe; ceFromParity = true; }
+            else if (rawPe <= 0 && rawCe > 0) { rawPe = rawCe; peFromParity = true; }
+            return {
+              time:    snap.time,
+              spot:    snap.spot,
+              vix:     snap.vix,
+              ce_iv:   rawCe,
+              pe_iv:   rawPe,
+              ce_ltp:  s ? s.ce_ltp : 0,
+              pe_ltp:  s ? s.pe_ltp : 0,
+              ce_from_parity: ceFromParity,
+              pe_from_parity: peFromParity,
+            };
+          });
+        }
 
         return (
           <div style={{ padding: '14px 20px', borderTop: '1px solid #1e293b' }}>
 
-            {/* Header */}
-            <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '0 0 12px',
-                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              IV Spread + Demand — Full Day · every 3 min
-            </p>
+            {/* Header + strike picker */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: 0,
+                           textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                IV Spread + Demand — Full Day · every 3 min
+                {pickedStrike && atm && (function() {
+                  if (isAtmSelected) {
+                    return <span style={{ marginLeft: 8, color: '#f59e0b', fontWeight: 700 }}>· {pickedStrike} ATM</span>;
+                  }
+                  var diff = Math.round((pickedStrike - atm) / (step || 50));
+                  var label = diff > 0 ? 'ATM+' + diff : 'ATM' + diff;
+                  return <span style={{ marginLeft: 8, color: '#60a5fa', fontWeight: 700 }}>· {pickedStrike} <span style={{ fontSize: 9, color: '#64748b' }}>({label})</span></span>;
+                })()}
+              </p>
+              {strikeList.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontSize: 10, color: '#64748b', marginRight: 4, fontWeight: 600 }}>STRIKE</span>
+                  {strikeList.map(function(s) {
+                    var isAtm = s === atm;
+                    var isSel = s === pickedStrike;
+                    return (
+                      <button key={s} onClick={function() { setSelectedStrike(s); }}
+                        style={{
+                          background: isSel ? (isAtm ? '#f59e0b' : '#60a5fa') : '#1e293b',
+                          color: isSel ? '#0f172a' : (isAtm ? '#f59e0b' : '#94a3b8'),
+                          border: '1px solid ' + (isSel ? 'transparent' : (isAtm ? '#f59e0b44' : '#334155')),
+                          borderRadius: 4, padding: '4px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                          fontFamily: 'inherit', minWidth: 52, textAlign: 'center',
+                        }}>
+                        {s}{isAtm && <span style={{ marginLeft: 3, fontSize: 9 }}>●</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* Table */}
             <div style={{ overflowX: 'auto', maxHeight: 420, overflowY: 'auto' }}>
@@ -896,6 +1021,10 @@ function IVDashboard(props) {
                                          fontWeight: ceR != null && ceR > 1.0 ? 700 : 400 }}>
                             {ceR != null ? ceR.toFixed(3) : '—'}
                           </span>
+                          {snap.ce_from_parity && ceR != null && (
+                            <span title="Backfilled from PE IV via put-call parity (CE deep ITM)"
+                                  style={{ fontSize: 9, color: '#a78bfa', marginLeft: 3, fontWeight: 700 }}>p</span>
+                          )}
                           {ceDir && <span style={{ fontSize: 10, color: ceColor, marginLeft: 4, fontWeight: 700 }}>{ceDir}</span>}
                         </td>
                         <td style={{ padding: '6px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -903,6 +1032,10 @@ function IVDashboard(props) {
                                          fontWeight: peR != null && peR > 1.0 ? 700 : 400 }}>
                             {peR != null ? peR.toFixed(3) : '—'}
                           </span>
+                          {snap.pe_from_parity && peR != null && (
+                            <span title="Backfilled from CE IV via put-call parity (PE deep ITM)"
+                                  style={{ fontSize: 9, color: '#a78bfa', marginLeft: 3, fontWeight: 700 }}>p</span>
+                          )}
                           {peDir && <span style={{ fontSize: 10, color: peColor, marginLeft: 4, fontWeight: 700 }}>{peDir}</span>}
                         </td>
                         <td style={{ padding: '6px 12px', textAlign: 'right', color: '#a78bfa', whiteSpace: 'nowrap' }}>
@@ -939,8 +1072,11 @@ function IVDashboard(props) {
                     <span style={{ color: '#4ade80' }}>CE/VIX ↑</span> — calls being bought above fear level → bullish. &nbsp;
                     <span style={{ color: '#f87171' }}>PE/VIX ↑</span> — puts being bought above fear level → bearish.
                   </p>
-                  <p style={{ fontSize: 10, color: '#475569', margin: 0, lineHeight: 1.5 }}>
+                  <p style={{ fontSize: 10, color: '#475569', margin: '0 0 2px', lineHeight: 1.5 }}>
                     Both ratios falling → IV crush in progress — premium collapsing, no edge in buying options.
+                  </p>
+                  <p style={{ fontSize: 10, color: '#475569', margin: '4px 0 0', lineHeight: 1.5 }}>
+                    <span style={{ color: '#a78bfa', fontWeight: 700 }}>p</span> next to a value — backfilled from the OTM side via put-call parity (deep ITM IV is unreliable; same-strike IVs are theoretically equal).
                   </p>
                 </div>
               </div>
@@ -1474,637 +1610,1249 @@ function VolumeLeaders(props) {
   );
 }
 
-// ─── OTM Positioning Intelligence ───────────────────────────────────────────
+// ─── Volume Analysis Panel + Spike Detector ─────────────────────────────────
 
+function _vfmt(n) {
+  if (!n) return '0';
+  var abs = Math.abs(n);
+  if (abs >= 10000000) return (n / 10000000).toFixed(2) + 'Cr';
+  if (abs >= 100000)   return (n / 100000).toFixed(1) + 'L';
+  if (abs >= 1000)     return (n / 1000).toFixed(0) + 'K';
+  return String(n);
+}
 
-// ─── Nifty/BankNifty Candlestick + COI PCR Histogram ─────────────────────────
-// history = intraday_history (newest first) from /api/futures-dashboard
-// Each snap: {time, open, high, low, close, price, vwap, pcr_coi, pcr, diff}
-// Top panel:    candlestick chart + VWAP line
-// Bottom panel: COI PCR as histogram (green above 1.0, red below)
-function PCRChart(props) {
-  var candles    = props.candles    || [];  // [{time,open,high,low,close}] from NSE/yfinance
-  var pcrHistory = props.pcrHistory || [];  // [{time,pcr_coi,pcr}] from pcr_intraday_3m
-  var dashHist   = props.dashHist   || [];  // [{time,vwap,fut_vol}] from intraday_history (optional)
-  var symbol     = props.symbol     || 'NIFTY';
+function _buildupColor(b) {
+  if (b === 'long_buildup')   return '#4ade80';
+  if (b === 'short_covering') return '#86efac';
+  if (b === 'short_buildup')  return '#f87171';
+  if (b === 'long_unwinding') return '#fca5a5';
+  if (b === 'churn')          return '#94a3b8';
+  return '#475569';
+}
 
-  var [hover, setHover] = React.useState(null);
-  var svgRef = React.useRef(null);
+function _buildupLabel(b) {
+  if (b === 'long_buildup')   return 'Long Buildup';
+  if (b === 'short_buildup')  return 'Short Buildup';
+  if (b === 'short_covering') return 'Short Covering';
+  if (b === 'long_unwinding') return 'Long Unwinding';
+  if (b === 'churn')          return 'Churn';
+  return 'Quiet';
+}
 
-  // Merge candles with PCR data by time key
-  // candles = chronological OHLC from NSE/yf  e.g. time="0915" or "09:15"
-  // pcrHistory = newest-first intraday snapshots time="0915"
-  var snaps = React.useMemo(function() {
-    // Normalise time to HHMM 4-digit string, stripping colons
-    function normTime(t) {
-      var s = String(t || '').replace(':', '');
-      return s.padStart(4, '0');
-    }
-    // Also build a minutes-since-midnight lookup for fuzzy matching
-    function toMins(t) {
-      var s = normTime(t);
-      return parseInt(s.slice(0,2), 10) * 60 + parseInt(s.slice(2), 10);
-    }
+function _voiBg(label) {
+  if (label === 'position_building') return 'rgba(74,222,128,0.12)';
+  if (label === 'balanced')          return 'rgba(245,158,11,0.10)';
+  if (label === 'mixed')             return 'rgba(148,163,184,0.10)';
+  if (label === 'churn')             return 'rgba(248,113,113,0.10)';
+  return 'transparent';
+}
 
-    var pcrByTime = {};
-    var pcrByMins = {};
-    // Primary: pcr_intraday_3m has pcr_coi per snapshot
-    pcrHistory.slice().reverse().forEach(function(s) {
-      var t = normTime(s.time);
-      var m = toMins(t);
-      pcrByTime[t] = s;
-      pcrByMins[m] = s;
-    });
-    // Secondary: dashHist for vwap + fut_vol
-    var dashByTime = {}, dashByMins = {};
-    dashHist.slice().reverse().forEach(function(s) {
-      var t = normTime(s.time);
-      var m = toMins(t);
-      dashByTime[t] = s;
-      dashByMins[m] = s;
-    });
+function _smartScoreColor(s) {
+  if (s >= 70) return '#4ade80';
+  if (s >= 50) return '#f59e0b';
+  return '#94a3b8';
+}
 
-    // Debug: log first few times from each source
-    if (candles.length > 0 && pcrHistory.length > 0) {
-      var cSample = candles.slice(0,3).map(function(c){ return normTime(c.time); });
-      var pSample = pcrHistory.slice(-3).map(function(s){ return normTime(s.time); });
-      console.log('[PCRChart] candle times:', cSample, 'pcr times:', pSample);
-    }
-
-    if (candles.length >= 3) {
-      return candles.filter(function(c) { return c.close > 0; }).map(function(c) {
-        var t   = normTime(c.time);
-        var m   = toMins(t);
-        // Exact match first, then ±3 min fuzzy match
-        var pcr  = pcrByTime[t]  || pcrByMins[m]  || pcrByMins[m+1]  || pcrByMins[m-1]
-                               || pcrByMins[m+2]  || pcrByMins[m-2]
-                               || pcrByMins[m+3]  || pcrByMins[m-3]  || {};
-        var dash = dashByTime[t] || dashByMins[m] || dashByMins[m+1] || dashByMins[m-1]
-                                 || dashByMins[m+2] || dashByMins[m-2]
-                                 || dashByMins[m+3] || dashByMins[m-3] || {};
-        return Object.assign({}, c, {
-          pcr_coi:  pcr.pcr_coi  || 0,
-          pcr:      pcr.pcr      || 0,
-          vwap:     dash.vwap    || pcr.vwap  || c.vwap || 0,
-          price:    c.close,
-          call_vol: pcr.call_vol || 0,
-          put_vol:  pcr.put_vol  || 0,
-          diff:     pcr.diff     || 0,
-          fut_vol:  dash.fut_vol || 0,
-        });
-      });
-    }
-
-    // Fallback: use pcrHistory even without price data
-    // pcr_intraday_3m has no price field — use 0, chart will hide candle panel
-    var pcrSnaps = pcrHistory.slice().reverse();
-    if (pcrSnaps.length > 0) return pcrSnaps;
-
-    // Last resort: try dashHist
-    return dashHist.slice().reverse().filter(function(s) {
-      return s.price > 0 || s.close > 0;
-    });
-  }, [candles, pcrHistory, dashHist]);
-
-  var n = snaps.length;
-
-  // ── Determine if we have real price data ──────────────────────────────────
-  var _allH = snaps.map(function(s){ return s.high || s.close || s.price || 0; }).filter(Boolean);
-  var _allL = snaps.map(function(s){ return s.low  || s.close || s.price || 0; }).filter(Boolean);
-  var hasPriceData = _allH.length >= 3 && Math.max.apply(null, _allH) !== Math.min.apply(null, _allL);
-
-  // ── Layout ────────────────────────────────────────────────────────────────
-  var W    = 880;
-  var Hc   = hasPriceData ? 240 : 0;   // hide candle panel if no price
-  var Hh   = hasPriceData ? 80 : 220;  // expand PCR panel when no candles
-  var Hv   = hasPriceData ? 70 : 0;    // hide volume panel if no price
-  var Hgap = 10;           // gap between panels
-  var padL = 12, padR = 68, padT = 18, padB = 32;
-  var cW   = W - padL - padR;
-  // Candle panel
-  var cTop = padT;
-  var cBot = padT + Hc;
-  // COI PCR histogram panel
-  var hTop = cBot + Hgap;
-  var hBot = hTop + Hh;
-  // Volume panel
-  var vTop = hBot + Hgap;
-  var vBot = vTop + Hv;
-  // Total SVG height
-  var svgH = vBot + padB;
-
-  // ── Candle data ───────────────────────────────────────────────────────────
-  function close(s) { return s.close || s.price || 0; }
-  function open_(s) { return s.open  || close(s); }
-  function high(s)  { return s.high  || close(s); }
-  function low(s)   { return s.low   || close(s); }
-
-  var allHigh = snaps.map(high).filter(Boolean);
-  var allLow  = snaps.map(low).filter(Boolean);
-  var pMax    = allHigh.length ? Math.max.apply(null, allHigh) : 0;
-  var pMin    = allLow.length  ? Math.min.apply(null, allLow)  : 0;
-  var pPad    = (pMax - pMin) * 0.1 || 10;
-  pMax += pPad; pMin -= pPad;
-  var pRange  = pMax - pMin || 1;
-
-  function xOf(i)  { return padL + (i / Math.max(n - 1, 1)) * cW; }
-  function pY(v)   { return cBot - ((v - pMin) / pRange) * (cBot - cTop); }
-
-  // Candle bar width
-  var barW = Math.max(4, Math.min(14, cW / Math.max(n, 1) * 0.75));
-
-  // ── Futures volume series ─────────────────────────────────────────────────
-  var futVols = snaps.map(function(s) { return s.fut_vol || 0; });
-  var maxVol  = Math.max.apply(null, futVols.filter(Boolean)) || 1;
-  function vY(v) { return vBot - (v / maxVol) * Hv; }
-
-  // ── VWAP line ─────────────────────────────────────────────────────────────
-  var vwapPoints = snaps.map(function(s, i) {
-    var v = s.vwap || 0;
-    return v > 0 ? (xOf(i).toFixed(1) + ',' + pY(v).toFixed(1)) : null;
-  }).filter(Boolean).join(' ');
-
-  // ── COI PCR histogram ─────────────────────────────────────────────────────
-  var coiVals   = snaps.map(function(s) { return s.pcr_coi || 0; });
-  // Hard cap at 3.0 — early session spikes (CE COI near zero) cause 4+ readings
-  // which compress the rest of the chart. Cap display at 3.0, clip in hY().
-  var COI_DISPLAY_MAX = 3.0;
-  var validCOI = coiVals.filter(function(v) { return v > 0 && v <= COI_DISPLAY_MAX; });
-  var hRef     = 1.0;
-
-  var hMin = 0, hMax = 0;
-  if (validCOI.length >= 4) {
-    var sorted  = validCOI.slice().sort(function(a,b){ return a-b; });
-    var median  = sorted[Math.floor(sorted.length * 0.5)];
-    var spread  = Math.max(0.3, sorted[Math.floor(sorted.length * 0.9)] - sorted[Math.floor(sorted.length * 0.1)]);
-    hMin = Math.max(0, Math.min(hRef - 0.2, median - spread * 0.8));
-    hMax = Math.min(COI_DISPLAY_MAX, Math.max(hRef + 0.3, median + spread * 1.2));
-  } else {
-    hMin = 0.5; hMax = 2.5;
-  }
-  // Always show 0.8 and 1.2 reference levels
-  hMin = Math.min(hMin, 0.7);
-  hMax = Math.max(hMax, 1.4);
-  var hRange = hMax - hMin || 1;
-  function hRefY() { return hBot - ((hRef - hMin) / hRange) * Hh; }
-  function hY(v)   {
-    var clipped = Math.max(hMin, Math.min(hMax, v));
-    return hBot - ((clipped - hMin) / hRange) * Hh;
-  }
-
-  // ── Price Y-axis nice ticks ───────────────────────────────────────────────
-  function niceTicks(lo, hi, count) {
-    var r   = hi - lo || 1;
-    var raw = r / count;
-    var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
-    var stp = Math.ceil(raw / mag) * mag;
-    var st  = Math.ceil(lo / stp) * stp;
-    var out = [];
-    for (var v = st; v <= hi + stp * 0.01; v = Math.round((v + stp) * 1000) / 1000) {
-      out.push(v);
-      if (out.length > 10) break;
-    }
-    return out;
-  }
-  var pTicks = niceTicks(pMin, pMax, 6);
-
-  // COI PCR right-axis ticks
-  var cTicks = niceTicks(hMin, hMax, 5);
-
-  // ── Time labels ───────────────────────────────────────────────────────────
-  var timeSeries = snaps.map(function(s) {
-    var t = String(s.time || '').padStart(4, '0');
-    return t.length === 4 ? t.slice(0,2) + ':' + t.slice(2) : String(s.time || '');
-  });
-  var xLabels = [];
-  if (n > 0) {
-    var every = Math.max(1, Math.floor(n / 8));
-    for (var ti = 0; ti < n; ti += every) xLabels.push({ i: ti, t: timeSeries[ti] });
-    if (!xLabels.length || xLabels[xLabels.length-1].i !== n-1)
-      xLabels.push({ i: n-1, t: timeSeries[n-1] });
-  }
-
-  // ── Last values ───────────────────────────────────────────────────────────
-  var lastSnap  = snaps[n-1] || {};
-  var lastClose = close(lastSnap);
-  var firstClose= close(snaps[0] || {});
-  var sessionUp = lastClose >= firstClose;
-  var lastCOI   = lastSnap.pcr_coi || 0;
-  var lastVwap  = lastSnap.vwap    || 0;
-  var coiColor  = lastCOI > 1.2 ? '#22c55e' : lastCOI < 0.8 ? '#ef4444' : '#94a3b8';
-
-  // ── Mouse ─────────────────────────────────────────────────────────────────
-  function onMouseMove(e) {
-    if (!svgRef.current || n < 2) return;
-    var rect  = svgRef.current.getBoundingClientRect();
-    var scaleX = W / rect.width;
-    var mx    = (e.clientX - rect.left) * scaleX;
-    var relX  = mx - padL;
-    if (relX < 0 || relX > cW) { setHover(null); return; }
-    var idx = Math.round((relX / cW) * (n - 1));
-    idx = Math.max(0, Math.min(n - 1, idx));
-    setHover({ idx: idx, x: xOf(idx) });
-  }
-
-  var hSnap = hover !== null ? (snaps[hover.idx] || {}) : null;
-  var hC     = hSnap ? close(hSnap) : 0;
-  var hCOI   = hSnap ? (hSnap.pcr_coi || 0) : 0;
-  var hVwap  = hSnap ? (hSnap.vwap    || 0) : 0;
-  var hFutV  = hSnap ? (hSnap.fut_vol  || 0) : 0;
-  var hTime = hover !== null ? (timeSeries[hover.idx] || '') : '';
-  var hX    = hover ? hover.x : 0;
-  // Tooltip
-  var ttW = 160, ttH = 70;
-  var ttX = hX + 14;
-  var ttY = cTop + 8;
-  if (ttX + ttW > W - padR - 4) ttX = hX - ttW - 14;
-
-  if (n < 1) {
+function VolumeAnalysisPanel(props) {
+  var v = props.volume;
+  if (!v || !v.top_volume_strikes) {
     return (
-      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
-                    padding: '32px', textAlign: 'center', color: '#475569', fontSize: 13 }}>
-        <p style={{ margin: '0 0 6px', fontSize: 15, color: '#64748b' }}>Collecting data…</p>
-        <p style={{ margin: 0, fontSize: 11, color: '#334155' }}>Chart available after ~10 minutes of market open</p>
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 24, color: '#64748b', fontSize: 13, marginBottom: 16 }}>
+        Volume analytics warming up…
       </div>
     );
   }
 
-  return (
-    <div style={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
+  var ceVolPct = v.total_ce_volume / Math.max(v.total_ce_volume + v.total_pe_volume, 1) * 100;
+  var pePct    = 100 - ceVolPct;
+  var churnCol = v.churn_pct < 50 ? '#4ade80' : v.churn_pct < 75 ? '#f59e0b' : '#f87171';
 
-      {/* ── Header ── */}
-      <div style={{ padding: '12px 20px', borderBottom: '1px solid #1e293b',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 20, marginBottom: 16 }}>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <p style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>
-            {symbol} · COI Put-Call Ratio
-          </p>
-          <p style={{ fontSize: 10, color: '#475569', margin: '2px 0 0' }}>
-            {hasPriceData
-              ? 'Candlestick · VWAP · COI PCR histogram · 3-min snapshots'
-              : 'COI PCR histogram · price chart loads from NSE · 3-min snapshots'}
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#f1f5f9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Volume Analysis
+          </h3>
+          <p style={{ margin: '3px 0 0', fontSize: 10, color: '#475569' }}>
+            ATM ±10 strikes · {v.snapshot_time} IST · {(v.tod_window || '').replace(/_/g, ' ')}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-          {/* Legend */}
-          {[
-            { col: '#22c55e', w: 10, h: 10, label: 'Bullish candle' },
-            { col: '#ef4444', w: 10, h: 10, label: 'Bearish candle' },
-            { col: '#0ea5e9', dash: true, label: 'VWAP' },
-            { col: '#22c55e', w: 10, h: 6,  label: 'Fut Vol ↑' },
-            { col: '#ef4444', w: 10, h: 6,  label: 'Fut Vol ↓' },
-          ].map(function(l, i) {
+        <span style={{ fontSize: 9, color: '#475569', fontStyle: 'italic' }}>
+          Volume = activity · OI = commitment
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: 12, marginBottom: 18 }}>
+
+        <div style={{ background: '#020617', borderRadius: 8, padding: '12px 14px' }}>
+          <div style={{ fontSize: 9, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, fontWeight: 700 }}>
+            Volume Split (Calls vs Puts)
+          </div>
+          <div style={{ display: 'flex', height: 22, borderRadius: 4, overflow: 'hidden', background: '#1e293b' }}>
+            <div style={{ width: ceVolPct + '%', background: '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: '#fff' }}>
+              {ceVolPct >= 12 ? 'CE ' + ceVolPct.toFixed(0) + '%' : ''}
+            </div>
+            <div style={{ width: pePct + '%', background: '#4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: '#0f172a' }}>
+              {pePct >= 12 ? 'PE ' + pePct.toFixed(0) + '%' : ''}
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: '#94a3b8' }}>
+            <span>{_vfmt(v.total_ce_volume)} CE</span>
+            <span style={{ color: v.ce_pe_volume_ratio > 1.2 ? '#f87171' : v.ce_pe_volume_ratio < 0.83 ? '#4ade80' : '#94a3b8', fontWeight: 700 }}>
+              CE/PE: {v.ce_pe_volume_ratio}
+            </span>
+            <span>{_vfmt(v.total_pe_volume)} PE</span>
+          </div>
+        </div>
+
+        <div style={{ background: '#020617', borderRadius: 8, padding: '12px 14px', textAlign: 'center' }}>
+          <div style={{ fontSize: 9, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, fontWeight: 700 }}>CE V/OI</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#f87171' }}>{v.ce_voi_ratio}</div>
+          <div style={{ fontSize: 9, color: '#475569' }}>
+            {v.ce_voi_ratio < 1.5 ? 'Position' : v.ce_voi_ratio < 3 ? 'Balanced' : v.ce_voi_ratio < 4 ? 'Mixed' : 'Churn'}
+          </div>
+        </div>
+
+        <div style={{ background: '#020617', borderRadius: 8, padding: '12px 14px', textAlign: 'center' }}>
+          <div style={{ fontSize: 9, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, fontWeight: 700 }}>PE V/OI</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#4ade80' }}>{v.pe_voi_ratio}</div>
+          <div style={{ fontSize: 9, color: '#475569' }}>
+            {v.pe_voi_ratio < 1.5 ? 'Position' : v.pe_voi_ratio < 3 ? 'Balanced' : v.pe_voi_ratio < 4 ? 'Mixed' : 'Churn'}
+          </div>
+        </div>
+
+        <div style={{ background: '#020617', borderRadius: 8, padding: '12px 14px', textAlign: 'center' }}>
+          <div style={{ fontSize: 9, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, fontWeight: 700 }}>Session Churn</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: churnCol }}>{v.churn_pct}%</div>
+          <div style={{ fontSize: 9, color: '#475569' }}>
+            {v.churn_pct < 50 ? 'Real positioning' : v.churn_pct < 75 ? 'Mixed flow' : 'Mostly day-trade'}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 9, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, fontWeight: 700 }}>
+        Top 5 Strikes by Volume — Buildup &amp; Smart Money
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+        <thead>
+          <tr style={{ background: '#020617' }}>
+            <th style={{ textAlign: 'left',   padding: '8px 10px', color: '#94a3b8', fontWeight: 700, fontSize: 10 }}>Strike</th>
+            <th style={{ textAlign: 'center', padding: '8px 10px', color: '#f87171', fontWeight: 700, fontSize: 10 }}>CE Buildup</th>
+            <th style={{ textAlign: 'right',  padding: '8px 10px', color: '#94a3b8', fontWeight: 700, fontSize: 10 }}>CE V/OI</th>
+            <th style={{ textAlign: 'right',  padding: '8px 10px', color: '#94a3b8', fontWeight: 700, fontSize: 10 }}>CE Vol</th>
+            <th style={{ textAlign: 'right',  padding: '8px 10px', color: '#94a3b8', fontWeight: 700, fontSize: 10 }}>PE Vol</th>
+            <th style={{ textAlign: 'right',  padding: '8px 10px', color: '#94a3b8', fontWeight: 700, fontSize: 10 }}>PE V/OI</th>
+            <th style={{ textAlign: 'center', padding: '8px 10px', color: '#4ade80', fontWeight: 700, fontSize: 10 }}>PE Buildup</th>
+            <th style={{ textAlign: 'center', padding: '8px 10px', color: '#94a3b8', fontWeight: 700, fontSize: 10 }}>SM Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {v.top_volume_strikes.map(function(s) {
+            var isAtm = s.strike === v.atm;
             return (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                {l.dash
-                  ? <svg width="22" height="10"><line x1="0" y1="5" x2="22" y2="5" stroke={l.col} strokeWidth="1.5" strokeDasharray="4,3"/></svg>
-                  : <div style={{ width: l.w, height: l.h, background: l.col, borderRadius: 2 }} />
-                }
-                <span style={{ fontSize: 10, color: '#64748b' }}>{l.label}</span>
+              <tr key={s.strike} style={{ borderBottom: '1px solid #1e293b22', background: isAtm ? 'rgba(245,158,11,0.05)' : 'transparent' }}>
+                <td style={{ padding: '9px 10px', fontWeight: 800, color: '#f1f5f9' }}>
+                  {s.strike}
+                  {isAtm && <span style={{ marginLeft: 6, fontSize: 8, padding: '2px 5px', background: 'rgba(245,158,11,0.2)', color: '#f59e0b', borderRadius: 3, fontWeight: 700 }}>ATM</span>}
+                </td>
+                <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: _buildupColor(s.ce.buildup), padding: '3px 7px', borderRadius: 4, background: _voiBg(s.ce.voi_label) }}>
+                    {_buildupLabel(s.ce.buildup)}
+                  </span>
+                </td>
+                <td style={{ padding: '9px 10px', textAlign: 'right', color: '#cbd5e1', fontWeight: 700 }}>{s.ce.voi_ratio}</td>
+                <td style={{ padding: '9px 10px', textAlign: 'right', color: '#94a3b8' }}>{_vfmt(s.ce.volume)}</td>
+                <td style={{ padding: '9px 10px', textAlign: 'right', color: '#94a3b8' }}>{_vfmt(s.pe.volume)}</td>
+                <td style={{ padding: '9px 10px', textAlign: 'right', color: '#cbd5e1', fontWeight: 700 }}>{s.pe.voi_ratio}</td>
+                <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: _buildupColor(s.pe.buildup), padding: '3px 7px', borderRadius: 4, background: _voiBg(s.pe.voi_label) }}>
+                    {_buildupLabel(s.pe.buildup)}
+                  </span>
+                </td>
+                <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: _smartScoreColor(s.smart_money_score) }}>
+                    {s.smart_money_score}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 12, padding: '10px 12px', background: '#020617', borderRadius: 6, fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
+        <strong style={{ color: '#94a3b8' }}>How to read:</strong>{' '}
+        V/OI &lt; 1.5 = position building (high conviction) ·
+        1.5–3 = balanced ·
+        &gt; 4 = churn (ignore for structure).
+        Smart Money Score weighs V/OI, ΔOI conversion, time-of-day, and strike distance.{' '}
+        <strong style={{ color: '#cbd5e1' }}>≥ 70 = likely institutional.</strong>
+      </div>
+    </div>
+  );
+}
+
+function VolumeSpikePanel(props) {
+  var samples      = props.samples      || 0;     // chainHistory length
+  var minSamples   = props.minSamples   || 6;     // need 6 to compute 5 deltas
+  var spikes       = props.spikes       || [];
+  var threshold    = props.threshold    || 1.5;
+  var setThreshold = props.setThreshold;
+  var sessionPhase = props.sessionPhase || 'live';  // 'open-noise', 'live', 'closed'
+
+  if (samples < minSamples) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 20, marginBottom: 16 }}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 14, fontWeight: 800, color: '#f1f5f9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Volume Spike Detector
+        </h3>
+        <p style={{ margin: 0, fontSize: 11, color: '#64748b' }}>
+          Warming up — need {minSamples - samples} more snapshot(s) to establish baseline. ({samples}/{minSamples})
+        </p>
+      </div>
+    );
+  }
+
+  var phaseNote = sessionPhase === 'open-noise'
+                ? 'Suppressing first 20 min of session (open is structurally noisy)'
+                : sessionPhase === 'closed'
+                ? 'Market closed · showing latest detection'
+                : null;
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 20, marginBottom: 16 }}>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#f1f5f9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Volume Spike Detector
+          </h3>
+          <p style={{ margin: '3px 0 0', fontSize: 10, color: '#475569' }}>
+            Strikes with delta volume &gt; {threshold}× rolling avg · {samples} snapshots in baseline
+          </p>
+          {phaseNote && (
+            <p style={{ margin: '3px 0 0', fontSize: 10, color: '#f59e0b' }}>⏳ {phaseNote}</p>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: '#64748b' }}>Threshold</span>
+          <select
+            value={threshold}
+            onChange={function(e) { if (setThreshold) setThreshold(parseFloat(e.target.value)); }}
+            style={{ background: '#020617', color: '#f1f5f9', border: '1px solid #1e293b', borderRadius: 4, padding: '4px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+          >
+            <option value={1.5}>1.5×</option>
+            <option value={2}>2×</option>
+            <option value={3}>3×</option>
+            <option value={5}>5×</option>
+          </select>
+        </div>
+      </div>
+
+      {spikes.length === 0 ? (
+        <div style={{ padding: '24px 12px', textAlign: 'center', color: '#475569', fontSize: 12 }}>
+          No volume spikes above {threshold}× this snapshot. Tape is quiet.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {spikes.map(function(spike, i) {
+            var sideCol = spike.side === 'CE' ? '#f87171' : '#4ade80';
+            var sideBg  = spike.side === 'CE' ? 'rgba(248,113,113,0.10)' : 'rgba(74,222,128,0.10)';
+            var aggrCol = spike.aggression === 'writer' ? '#f87171' :
+                          spike.aggression === 'buyer'  ? '#4ade80' :
+                          spike.aggression === 'unwind' ? '#94a3b8' : '#64748b';
+            var aggrLabel = spike.aggression === 'writer' ? 'Writer aggression (sold to bid)' :
+                            spike.aggression === 'buyer'  ? 'Buyer aggression (lifted offer)' :
+                            spike.aggression === 'unwind' ? 'Position unwind (OI down)' :
+                            'Neutral two-sided';
+            return (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '70px 50px 90px 80px 1fr 70px 60px', gap: 10, alignItems: 'center', padding: '9px 12px', background: sideBg, borderRadius: 6, borderLeft: '3px solid ' + sideCol }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#f1f5f9' }}>
+                  {spike.strike}
+                  {spike.is_atm && <span style={{ marginLeft: 4, fontSize: 8, color: '#f59e0b' }}>●</span>}
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: sideCol }}>{spike.side}</div>
+                <div>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: '#f1f5f9' }}>{spike.multiple.toFixed(1)}×</span>
+                  <span style={{ fontSize: 9, color: '#64748b', marginLeft: 4 }}>avg</span>
+                </div>
+                <div style={{ fontSize: 11, color: '#cbd5e1' }}>
+                  +{_vfmt(spike.delta_volume)}
+                  <span style={{ fontSize: 9, color: '#64748b', marginLeft: 3 }}>vol</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: aggrCol }}>{aggrLabel}</div>
+                  <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                    {_buildupLabel(spike.buildup)} · ΔOI {spike.delta_oi >= 0 ? '+' : ''}{_vfmt(spike.delta_oi)}
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: '#64748b' }}>{spike.time}</div>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: _smartScoreColor(spike.sm_score) }}>{spike.sm_score}</span>
+                  <div style={{ fontSize: 8, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>SM Score</div>
+                </div>
               </div>
             );
           })}
-          <div style={{ width: 1, height: 24, background: '#1e293b' }} />
-          {lastClose > 0 && (
-            <div>
-              <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', textTransform: 'uppercase', fontWeight: 600 }}>LTP</p>
-              <span style={{ fontSize: 14, fontWeight: 800, color: sessionUp ? '#22c55e' : '#ef4444' }}>
-                {lastClose.toLocaleString()}
-              </span>
-            </div>
-          )}
-          {lastCOI > 0 && (
-            <div>
-              <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', textTransform: 'uppercase', fontWeight: 600 }}>COI PCR</p>
-              <span style={{ fontSize: 14, fontWeight: 800, color: coiColor }}>{lastCOI.toFixed(2)}</span>
-            </div>
-          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, padding: '10px 12px', background: '#020617', borderRadius: 6, fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
+        <strong style={{ color: '#94a3b8' }}>Reading the tape:</strong>{' '}
+        <span style={{ color: '#f87171' }}>Writer aggression</span> at a strike = that strike often becomes S/R (~65-70% hit rate same-day on Indian indices).{' '}
+        <span style={{ color: '#4ade80' }}>Buyer aggression</span> = directional bet, lower hit rate but faster moves when right.
+        Deep OTM spikes are usually retail FOMO — weight the SM Score heavily.
+      </div>
+    </div>
+  );
+}
+
+// ─── TV Events Panel — events streamed from TradingView Pine Script via ──────
+// the local webhook receiver (/api/tv/webhook → /api/tv/events). Shows the
+// strongest signal per bar emitted by the NIFTY Option Volume Flow Tracker
+// indicator. Polls /api/tv/events every 5s using since={lastSeenId} for
+// efficient incremental fetch.
+function TVEventsPanel(props) {
+  var events     = props.events     || [];
+  var configured = props.configured;
+  var lastErr    = props.lastErr;
+
+  function sigInterpretation(sig, side, buyerRead) {
+    // Translate the Pine signal codes to a buyer-perspective read
+    if (sig === 'AB+') {
+      return side === 'CE'
+        ? '🟢 EXTREME CALL BUYING — call buyers paying up · CE-friendly · z≥3'
+        : '🔴 EXTREME PUT BUYING — put buyers paying up · PE-friendly · z≥3';
+    }
+    if (sig === 'AB') {
+      return side === 'CE'
+        ? '🟢 Aggressive call buying — CE-friendly · z≥2'
+        : '🔴 Aggressive put buying — PE-friendly · z≥2';
+    }
+    if (sig === 'AS+') {
+      return side === 'CE'
+        ? '🟠 EXTREME CALL SELLING — writers active · resistance forming · z≥3'
+        : '🟢 EXTREME PUT SELLING — writers active · support forming · z≥3';
+    }
+    if (sig === 'AS') {
+      return side === 'CE'
+        ? '🟠 Aggressive call selling — writers active · z≥2'
+        : '🟢 Aggressive put selling — writers active · z≥2';
+    }
+    return '— neutral';
+  }
+
+  function sigColor(sig, side) {
+    var bull = side === 'CE' ? (sig === 'AB' || sig === 'AB+') : (sig === 'AS' || sig === 'AS+');
+    var bear = side === 'CE' ? (sig === 'AS' || sig === 'AS+') : (sig === 'AB' || sig === 'AB+');
+    if (bull) return '#4ade80';
+    if (bear) return '#f87171';
+    return '#94a3b8';
+  }
+
+  function biasColor(verdict) {
+    if (verdict === 'BULLISH++') return '#4ade80';
+    if (verdict === 'BULLISH')   return '#a3e635';
+    if (verdict === 'BEARISH++') return '#f87171';
+    if (verdict === 'BEARISH')   return '#f59e0b';
+    return '#64748b';
+  }
+
+  function fmtAgo(receivedMs) {
+    if (!receivedMs) return '—';
+    var s = Math.max(0, Math.floor((Date.now() - receivedMs) / 1000));
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
+  }
+
+  // Show newest first
+  var ordered = events.slice().reverse();
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 20, marginBottom: 16 }}>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#f1f5f9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <span style={{ background: '#a78bfa', color: '#0f172a', padding: '2px 6px', borderRadius: 3, fontSize: 9, marginRight: 8, fontWeight: 800 }}>LIVE</span>
+            Volume Analysis
+          </h3>
+          <p style={{ margin: '3px 0 0', fontSize: 10, color: '#475569' }}>
+            Real-time Z-score volume spikes from TradingView · arrives on bar close · {ordered.length} buffered
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
+                         background: configured && !lastErr ? '#4ade80' : configured && lastErr ? '#f59e0b' : '#64748b',
+                         boxShadow: configured && !lastErr ? '0 0 6px #4ade80aa' : 'none' }} />
+          <span style={{ fontSize: 10, color: configured && !lastErr ? '#4ade80' : configured && lastErr ? '#f59e0b' : '#64748b', fontWeight: 600 }}>
+            {!configured ? 'NOT CONFIGURED' : lastErr ? 'POLL ERROR' : 'LIVE'}
+          </span>
         </div>
       </div>
 
-      {/* ── SVG ── */}
-      <div style={{ overflowX: 'auto' }}>
-        <svg
-          ref={svgRef}
-          width="100%"
-          viewBox={'0 0 ' + W + ' ' + svgH}
-          style={{ display: 'block', minWidth: 480, cursor: 'crosshair' }}
-          onMouseMove={onMouseMove}
-          onMouseLeave={function() { setHover(null); }}
-        >
-          <defs>
-            <clipPath id="candleClip">
-              <rect x={padL} y={cTop} width={cW} height={Hc} />
-            </clipPath>
-            <clipPath id="histClip">
-              <rect x={padL} y={hTop} width={cW} height={Hh} />
-            </clipPath>
-            <clipPath id="volClip">
-              <rect x={padL} y={vTop} width={cW} height={Hv} />
-            </clipPath>
-          </defs>
+      {!configured && (
+        <div style={{ padding: '14px 16px', background: 'rgba(100,116,139,0.08)', border: '1px solid #334155', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>
+          <strong style={{ color: '#cbd5e1' }}>Not connected to TradingView yet.</strong>{' '}
+          Set <code style={{ background: '#020617', padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>TV_WEBHOOK_SECRET</code> in your backend env,
+          add the webhook section to your Pine Script, expose your local server via ngrok, and create a TradingView alert pointing at the public URL.
+          See <code style={{ background: '#020617', padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>tv_integration/SETUP.md</code> for the full setup.
+        </div>
+      )}
 
-          {/* ── Candle panel — only when price data available ── */}
-          {hasPriceData && <rect x={padL} y={cTop} width={cW} height={Hc} fill="#0d1117" />}
+      {configured && ordered.length === 0 && (
+        <div style={{ padding: '24px 12px', textAlign: 'center', color: '#475569', fontSize: 12 }}>
+          Connected · awaiting first event from TradingView. Events fire on bar close when any strike Z ≥ 2.5 or bias |%| ≥ 45.
+        </div>
+      )}
 
-          {/* Price grid lines + candles + VWAP — only when price data available */}
-          {hasPriceData && pTicks.map(function(v, i) {
-            var y = pY(v);
-            if (y < cTop || y > cBot) return null;
+      {ordered.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 380, overflowY: 'auto' }}>
+          {ordered.map(function(e) {
+            var sCol = sigColor(e.sig, e.side);
+            var sBg  = sCol === '#4ade80' ? 'rgba(74,222,128,0.08)'
+                     : sCol === '#f87171' ? 'rgba(248,113,113,0.08)'
+                     : 'rgba(148,163,184,0.05)';
+            var biasC = biasColor(e.bias_verdict);
+            var interp = sigInterpretation(e.sig, e.side, e.buyer_read);
             return (
-              <g key={i}>
-                <line x1={padL} y1={y} x2={padL+cW} y2={y}
-                      stroke="#1e293b" strokeWidth="1" />
-                <text x={padL+cW+6} y={y+4} fill="#475569" fontSize="10"
-                      textAnchor="start" fontFamily="monospace">
-                  {v >= 10000 ? Math.round(v).toLocaleString() : v.toFixed(0)}
-                </text>
-              </g>
+              <div key={e.id} style={{ display: 'grid', gridTemplateColumns: '70px 60px 80px 1fr 90px 70px',
+                                        gap: 10, alignItems: 'center', padding: '9px 12px',
+                                        background: sBg, borderRadius: 6, borderLeft: '3px solid ' + sCol }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#f1f5f9' }}>{e.strike}</div>
+                  <div style={{ fontSize: 9, color: '#64748b' }}>{e.tf}-min</div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: sCol }}>{e.side}</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: sCol }}>{e.sig || '—'}</div>
+                  <div style={{ fontSize: 9, color: '#64748b' }}>z={e.z != null ? Number(e.z).toFixed(1) : '—'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{interp}</div>
+                  <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                    LTP ₹{e.ltp != null ? Number(e.ltp).toFixed(1) : '—'}
+                    {e.delta_pct != null && <span> · Δ{e.delta_pct > 0 ? '+' : ''}{Math.round(e.delta_pct)}%</span>}
+                    {' · spot '}{e.spot}
+                    {' · bias '}<span style={{ color: biasC, fontWeight: 700 }}>{e.bias_verdict}</span>
+                    {e.bias_flip && <span style={{ color: '#f59e0b', marginLeft: 4 }}> · 🔄 FLIP</span>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: '#64748b' }}>{e.ts ? e.ts.slice(11, 16) : ''}</div>
+                <div style={{ fontSize: 10, color: '#475569', textAlign: 'right' }}>{fmtAgo(e.received_ms)}</div>
+              </div>
             );
           })}
+        </div>
+      )}
 
-          {hasPriceData && vwapPoints && (
-            <polyline points={vwapPoints} fill="none" stroke="#0ea5e9"
-                      strokeWidth="1.5" strokeDasharray="5,3" opacity="0.8"
-                      clipPath="url(#candleClip)" />
-          )}
-
-          {/* Candlesticks */}
-          {snaps.map(function(s, i) {
-            var o = open_(s), c = close(s), h_ = high(s), l_ = low(s);
-            if (!c) return null;
-            var isUp    = c >= o;
-            var col     = isUp ? '#22c55e' : '#ef4444';
-            var bodyTop = pY(Math.max(o, c));
-            var bodyBot = pY(Math.min(o, c));
-            var bodyH   = Math.max(3, bodyBot - bodyTop);
-            var wickTop = pY(h_);
-            var wickBot = pY(l_);
-            var x       = xOf(i);
-            return (
-              <g key={i} clipPath="url(#candleClip)">
-                <line x1={x} y1={wickTop} x2={x} y2={wickBot}
-                      stroke={col} strokeWidth="1" opacity="0.9" />
-                <rect x={x - barW/2} y={bodyTop} width={barW} height={bodyH}
-                      fill={isUp ? col : col} stroke={col}
-                      strokeWidth={bodyH < 2 ? 0 : 0.5}
-                      opacity={hover && hover.idx === i ? 1 : 0.9}
-                      rx="0.5" />
-              </g>
-            );
-          })}
-
-          {/* Current price label on right axis */}
-          {lastClose > 0 && (function() {
-            var y   = pY(lastClose);
-            var col = sessionUp ? '#22c55e' : '#ef4444';
-            if (y < cTop || y > cBot) return null;
-            return (
-              <g>
-                <line x1={padL} y1={y} x2={padL+cW} y2={y}
-                      stroke={col} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5" />
-                <rect x={padL+cW+2} y={y-9} width={padR-4} height={18}
-                      fill={col} rx="3" />
-                <text x={padL+cW+6} y={y+4} fill="#fff" fontSize="10"
-                      fontFamily="monospace" fontWeight="700">
-                  {Math.round(lastClose).toLocaleString()}
-                </text>
-              </g>
-            );
-          })()}
-
-          {/* ── Histogram panel background ── */}
-          <rect x={padL} y={hTop} width={cW} height={Hh} fill="#080c12" />
-
-          {/* Histogram zero line */}
-          <line x1={padL} y1={hRefY()} x2={padL+cW} y2={hRefY()}
-                stroke="#334155" strokeWidth="1" />
-          <text x={padL+cW+6} y={hRefY()+4} fill="#475569" fontSize="9"
-                fontFamily="monospace">1.0</text>
-
-          {/* COI PCR line */}
-          {(function() {
-            var pts = snaps.map(function(s, i) {
-              var v = s.pcr_coi || 0;
-              return v > 0 ? (xOf(i).toFixed(1) + ',' + hY(v).toFixed(1)) : null;
-            }).filter(Boolean).join(' ');
-            if (!pts) return null;
-            var lastV   = snaps.map(function(s){ return s.pcr_coi||0; }).filter(Boolean);
-            var lastVal = lastV[lastV.length-1] || 0;
-            var lineCol = lastVal > 1.2 ? '#22c55e' : lastVal < 0.8 ? '#ef4444' : '#f59e0b';
-            // Fill under the line from the 1.0 reference
-            var fillPts = snaps.map(function(s, i) {
-              var v = s.pcr_coi || 0;
-              return v > 0 ? (xOf(i).toFixed(1) + ',' + hY(v).toFixed(1)) : null;
-            }).filter(Boolean);
-            var firstX = fillPts.length ? fillPts[0].split(',')[0] : padL;
-            var lastX  = fillPts.length ? fillPts[fillPts.length-1].split(',')[0] : padL+cW;
-            var refY   = hRefY().toFixed(1);
-            var fillD  = pts + ' ' + lastX + ',' + refY + ' ' + firstX + ',' + refY;
-            return (
-              <g clipPath="url(#histClip)">
-                <polygon points={fillD} fill={lineCol} opacity="0.1" />
-                <polyline points={pts} fill="none" stroke={lineCol}
-                          strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-                {/* Last value dot */}
-                {(function() {
-                  var lastIdx = snaps.length - 1;
-                  while (lastIdx >= 0 && !snaps[lastIdx].pcr_coi) lastIdx--;
-                  if (lastIdx < 0) return null;
-                  return <circle cx={xOf(lastIdx)} cy={hY(snaps[lastIdx].pcr_coi)} r="3.5" fill={lineCol} />;
-                })()}
-                {/* Hover dot */}
-                {hover !== null && snaps[hover.idx] && snaps[hover.idx].pcr_coi > 0 && (
-                  <circle cx={xOf(hover.idx)} cy={hY(snaps[hover.idx].pcr_coi)}
-                          r="4" fill="#fff" stroke={lineCol} strokeWidth="2" />
-                )}
-              </g>
-            );
-          })()}
-
-          {/* COI PCR right-axis ticks */}
-          {cTicks.map(function(v, i) {
-            var y = hY(v);
-            if (y < hTop || y > hBot) return null;
-            return (
-              <text key={i} x={padL+cW+6} y={y+4} fill="#334155" fontSize="9"
-                    fontFamily="monospace">{v.toFixed(1)}</text>
-            );
-          })}
-
-          {/* Current COI label */}
-          {lastCOI > 0 && (function() {
-            var y   = hY(lastCOI);
-            var col = lastCOI > 1.2 ? '#22c55e' : lastCOI < 0.8 ? '#ef4444' : '#94a3b8';
-            if (y < hTop || y > hBot) return null;
-            return (
-              <g>
-                <rect x={padL+cW+2} y={y-9} width={padR-4} height={18}
-                      fill={col} rx="3" />
-                <text x={padL+cW+6} y={y+4} fill="#fff" fontSize="10"
-                      fontFamily="monospace" fontWeight="700">
-                  {lastCOI.toFixed(2)}
-                </text>
-              </g>
-            );
-          })()}
-
-          {/* ── Panel divider: candles / PCR ── */}
-          <line x1={padL} y1={cBot + Hgap/2} x2={padL+cW} y2={cBot + Hgap/2}
-                stroke="#1e293b" strokeWidth="1" />
-
-          {/* ── Volume panel ── */}
-          <rect x={padL} y={vTop} width={cW} height={Hv} fill="#080c12" />
-
-          {/* Volume zero line */}
-          <line x1={padL} y1={vBot} x2={padL+cW} y2={vBot} stroke="#1e293b" strokeWidth="1" />
-
-          {/* Futures volume bars — coloured by candle direction */}
-          {snaps.map(function(s, i) {
-            var fv  = s.fut_vol || 0;
-            if (!fv) return null;
-            var isUp = (s.close || s.price || 0) >= (s.open || s.close || s.price || 0);
-            var col  = isUp ? '#22c55e' : '#ef4444';
-            var x    = xOf(i);
-            var hov  = hover && hover.idx === i;
-            return (
-              <rect key={i} x={x - barW/2} y={vY(fv)} width={barW}
-                    height={Math.max(1, vBot - vY(fv))}
-                    fill={col} opacity={hov ? 1 : 0.65}
-                    clipPath="url(#volClip)" rx="0.5" />
-            );
-          })}
-
-          {/* Volume panel label */}
-          <text x={padL + 6} y={vTop + 14} fill="#475569" fontSize="9"
-                fontFamily="sans-serif" fontWeight="600">
-            FUTURES VOL
-          </text>
-
-          {/* Volume max label on right */}
-          {maxVol > 0 && (
-            <text x={padL+cW+5} y={vTop+12} fill="#334155" fontSize="9" fontFamily="monospace">
-              {maxVol >= 100000 ? (maxVol/100000).toFixed(1)+'L' : maxVol >= 1000 ? (maxVol/1000).toFixed(0)+'K' : maxVol}
-            </text>
-          )}
-
-          {/* Panel divider: PCR / volume ── */}
-          <line x1={padL} y1={hBot + Hgap/2} x2={padL+cW} y2={hBot + Hgap/2}
-                stroke="#1e293b" strokeWidth="1" />
-
-          {/* ── Axis borders ── */}
-          <line x1={padL} y1={cTop}  x2={padL}    y2={cBot}  stroke="#1e293b" strokeWidth="1" />
-          <line x1={padL+cW} y1={cTop}  x2={padL+cW} y2={cBot}  stroke="#1e293b" strokeWidth="1" />
-          <line x1={padL} y1={hTop}  x2={padL}    y2={hBot}  stroke="#1e293b" strokeWidth="1" />
-          <line x1={padL+cW} y1={hTop}  x2={padL+cW} y2={hBot}  stroke="#1e293b" strokeWidth="1" />
-          <line x1={padL} y1={vTop}  x2={padL}    y2={vBot}  stroke="#1e293b" strokeWidth="1" />
-          <line x1={padL+cW} y1={vTop}  x2={padL+cW} y2={vBot}  stroke="#1e293b" strokeWidth="1" />
-
-          {/* ── X-axis time labels — below volume panel ── */}
-          {xLabels.map(function(tl, i) {
-            var x = xOf(tl.i);
-            return (
-              <g key={i}>
-                <line x1={x} y1={vBot} x2={x} y2={vBot+5} stroke="#1e293b" strokeWidth="1" />
-                <text x={x} y={vBot+18} fill="#475569" fontSize="10"
-                      textAnchor="middle" fontFamily="sans-serif">{tl.t}</text>
-              </g>
-            );
-          })}
-
-          {/* ── Crosshair ── */}
-          {hover !== null && (
-            <g>
-              {/* Vertical line across all three panels */}
-              <line x1={hX} y1={cTop}  x2={hX} y2={cBot}
-                    stroke="#60a5fa" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
-              <line x1={hX} y1={hTop}  x2={hX} y2={hBot}
-                    stroke="#60a5fa" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
-              <line x1={hX} y1={vTop}  x2={hX} y2={vBot}
-                    stroke="#60a5fa" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
-              {/* Horizontal price line */}
-              {hC > 0 && pY(hC) >= cTop && pY(hC) <= cBot && (
-                <line x1={padL} y1={pY(hC)} x2={padL+cW} y2={pY(hC)}
-                      stroke="#60a5fa" strokeWidth="1" strokeDasharray="3,3" opacity="0.4" />
-              )}
-              {/* Tooltip */}
-              <rect x={ttX} y={ttY} width={ttW} height={70}
-                    fill="#0f172a" stroke="#334155" strokeWidth="1" rx="6" opacity="0.95" />
-              {/* Time */}
-              <text x={ttX+10} y={ttY+16} fill="#94a3b8" fontSize="11"
-                    fontWeight="600" fontFamily="sans-serif">{hTime}</text>
-              {/* COI PCR */}
-              <text x={ttX+10} y={ttY+36} fill="#64748b" fontSize="11" fontFamily="sans-serif">COI PCR</text>
-              <text x={ttX+ttW-10} y={ttY+36}
-                    fill={hCOI > 1.2 ? '#22c55e' : hCOI < 0.8 ? '#ef4444' : '#94a3b8'}
-                    fontSize="13" fontFamily="monospace" fontWeight="800" textAnchor="end">
-                {hCOI > 0 ? hCOI.toFixed(2) : '—'}
-              </text>
-              {/* Fut Vol */}
-              <text x={ttX+10} y={ttY+56} fill="#64748b" fontSize="11" fontFamily="sans-serif">Fut Vol</text>
-              <text x={ttX+ttW-10} y={ttY+56} fill="#94a3b8"
-                    fontSize="11" fontFamily="monospace" textAnchor="end">
-                {hFutV > 0 ? (hFutV >= 100000 ? (hFutV/100000).toFixed(1)+'L' : hFutV >= 1000 ? (hFutV/1000).toFixed(0)+'K' : String(hFutV)) : '—'}
-              </text>
-            </g>
-          )}
-
-        </svg>
-      </div>
-
-      {/* ── Footer ── */}
-      <div style={{ padding: '8px 20px', borderTop: '1px solid #1e293b',
-                    display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center',
-                    background: '#080c12' }}>
-        <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>COI PCR &gt;1.2 — Put COI dominant · bullish</span>
-        <span style={{ fontSize: 10, color: '#475569' }}>~1.0 neutral</span>
-        <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 600 }}>COI PCR &lt;0.8 — Call COI dominant · bearish</span>
-        <span style={{ fontSize: 10, color: '#334155', marginLeft: 'auto' }}>{n} candles · 3-min</span>
+      <div style={{ marginTop: 12, padding: '10px 12px', background: '#020617', borderRadius: 6, fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
+        <strong style={{ color: '#94a3b8' }}>Reading the codes:</strong>{' '}
+        <span style={{ color: '#4ade80' }}>AB / AB+</span> = aggressive buying (premium up + Z ≥ 2 / 3) ·{' '}
+        <span style={{ color: '#f87171' }}>AS / AS+</span> = aggressive selling (premium down + Z ≥ 2 / 3).{' '}
+        For an option buyer: CE-AB or PE-AS = call buyers favored · PE-AB or CE-AS = put buyers favored.
+        Bias is page-wide CE vs PE pressure across all 14 strike-sides on TV.
       </div>
     </div>
   );
 }
 
 
+// Mirrors UnwindAlerts styling. Shows the most recent / highest-SM-score
+// volume spike chips. Filtered: only SM >= 60 spikes from the latest snapshot.
+
+function VolumeSpikeBanner(props) {
+  var spikes = (props.spikes || []).filter(function(s) { return s.sm_score >= 60; });
+  if (spikes.length === 0) return null;
+
+  // Deduplicate by strike+side, keeping the highest SM score
+  var byKey = {};
+  spikes.forEach(function(s) {
+    var k = s.strike + '_' + s.side;
+    if (!byKey[k] || byKey[k].sm_score < s.sm_score) byKey[k] = s;
+  });
+  var deduped = Object.keys(byKey).map(function(k) { return byKey[k]; })
+                                    .sort(function(a, b) { return b.sm_score - a.sm_score; })
+                                    .slice(0, 8);
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #f59e0b44', borderRadius: 12, padding: '14px 20px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 16 }}>⚡</span>
+        <p style={{ fontSize: 13, fontWeight: 700, color: '#f59e0b', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Unusual Volume Activity
+        </p>
+        <span style={{ fontSize: 11, color: '#64748b' }}>
+          {deduped.length} strike{deduped.length === 1 ? '' : 's'} with smart-money footprint detected
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {deduped.map(function(s, i) {
+          var sideCol = s.side === 'CE' ? '#f87171' : '#4ade80';
+          var aggrIcon = s.aggression === 'writer' ? '✍️' :
+                         s.aggression === 'buyer'  ? '🎯' :
+                         s.aggression === 'unwind' ? '↩️' : '•';
+          return (
+            <div key={i} style={{ background: '#1e293b', borderRadius: 8, padding: '8px 14px', border: '1px solid ' + sideCol + '44', minWidth: 130 }}>
+              <p style={{ fontSize: 10, color: '#64748b', margin: '0 0 2px', fontWeight: 600 }}>
+                {aggrIcon} {s.side} · {s.multiple.toFixed(1)}× avg vol
+              </p>
+              <p style={{ fontSize: 15, fontWeight: 800, color: '#f1f5f9', margin: '0 0 2px' }}>
+                {s.strike}
+                {s.is_atm && <span style={{ marginLeft: 4, fontSize: 8, color: '#f59e0b' }}>●</span>}
+              </p>
+              <p style={{ fontSize: 11, fontWeight: 700, color: sideCol, margin: 0 }}>
+                SM {s.sm_score} · {_buildupLabel(s.buildup)}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Macro Context Panels — IV Regime, Option Flow CVD, Spot Context ──────
+
+// ─── IV vs Realized Vol — buyer's macro question ──────────────────────────────
+// Rich/fair/cheap regime indicator. RICH = buyers overpaying for vol that's
+// not materializing. CHEAP = buyers getting a discount.
+//
+// Inputs:
+//   ivHistory       — [{ce_iv, pe_iv, avg_iv, ...}] 3-min snapshots
+//   intradayHistory — [{time, price, ...}] 3-min snapshots
+//   symbol          — 'NIFTY' or 'BANKNIFTY'
+//
+// Caveat: "RV" here is computed from today's session 3-min returns, annualized.
+// For a true 5-day RV comparator the backend would need to provide multi-session
+// price history. Today's session RV is a reasonable proxy when 30+ bars exist.
+function IVRegimeBadge(props) {
+  var ivHistory       = props.ivHistory       || [];
+  var intradayHistory = props.intradayHistory || [];
+
+  // Need enough bars for stable RV — at least ~30 (90 min)
+  if (ivHistory.length < 2 || intradayHistory.length < 30) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
+                    padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          IV vs RV Regime
+        </span>
+        <span style={{ fontSize: 12, color: '#334155' }}>
+          ⏳ Building data — need 30+ intraday bars (~90 min) for RV stability
+        </span>
+      </div>
+    );
+  }
+
+  // ── Compute today's session RV from 3-min log returns ────────────────────
+  // Reverse-chronological → chronological for math sanity
+  var ordered = intradayHistory.slice().reverse();
+  var prices = ordered.map(function(s) { return s.price || 0; }).filter(function(p) { return p > 0; });
+  if (prices.length < 30) {
+    return null;  // shouldn't happen given above guard
+  }
+  var logRets = [];
+  for (var i = 1; i < prices.length; i++) {
+    if (prices[i-1] > 0 && prices[i] > 0) {
+      logRets.push(Math.log(prices[i] / prices[i-1]));
+    }
+  }
+  var mean = logRets.reduce(function(a, b) { return a + b; }, 0) / Math.max(logRets.length, 1);
+  var variance = logRets.reduce(function(a, b) { return a + (b - mean) * (b - mean); }, 0) / Math.max(logRets.length - 1, 1);
+  var stdev = Math.sqrt(variance);
+  // Bars per trading day = 75 (6.25 hrs × 60 / 5)... actually 3-min = ~125 bars.
+  // Trading-day count: 9:15 to 15:30 = 375 min / 3 = 125 bars/day.
+  // Annualization: stdev × sqrt(125 × 252) = stdev × sqrt(31500)
+  var rvAnnual = stdev * Math.sqrt(125 * 252) * 100;  // as %
+
+  // ── Current IV ──
+  var lastIV = ivHistory[ivHistory.length - 1];
+  var ivAtm  = lastIV.avg_iv || ((lastIV.ce_iv + lastIV.pe_iv) / 2);
+
+  // ── Spread ──
+  var spread = ivAtm - rvAnnual;
+  var regime, regimeColor, regimeNote;
+  if (spread > 4) {
+    regime      = 'RICH';
+    regimeColor = '#f87171';
+    regimeNote  = 'IV well above realized — buyers overpaying for vol that isn\u2019t materializing';
+  } else if (spread > 1.5) {
+    regime      = 'MILDLY RICH';
+    regimeColor = '#f59e0b';
+    regimeNote  = 'IV above realized — slight premium for buyers';
+  } else if (spread > -1.5) {
+    regime      = 'FAIR';
+    regimeColor = '#a3e635';
+    regimeNote  = 'IV roughly aligned with realized — neutral conditions';
+  } else if (spread > -4) {
+    regime      = 'MILDLY CHEAP';
+    regimeColor = '#60a5fa';
+    regimeNote  = 'IV below realized — modest buyer edge';
+  } else {
+    regime      = 'CHEAP';
+    regimeColor = '#4ade80';
+    regimeNote  = 'IV well below realized — vol is discounted, buyer market';
+  }
+
+  // Daily move expectation from IV
+  var dailyMovePct = ivAtm / Math.sqrt(252);
+  var lastPrice = prices[prices.length - 1];
+  var dailyMovePts = lastPrice * (dailyMovePct / 100);
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b',
+                  borderLeft: '4px solid ' + regimeColor, borderRadius: 12,
+                  padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+      <div style={{ minWidth: 130 }}>
+        <p style={{ fontSize: 9, color: '#475569', margin: '0 0 3px',
+                    fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          IV vs RV Regime
+        </p>
+        <span style={{ fontSize: 18, fontWeight: 900, color: regimeColor }}>{regime}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        <div>
+          <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>ATM IV</p>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#94a3b8' }}>{ivAtm.toFixed(1)}%</span>
+        </div>
+        <div>
+          <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>Session RV</p>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#94a3b8' }}>{rvAnnual.toFixed(1)}%</span>
+        </div>
+        <div>
+          <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>IV-RV</p>
+          <span style={{ fontSize: 14, fontWeight: 800, color: regimeColor }}>{spread > 0 ? '+' : ''}{spread.toFixed(1)}</span>
+        </div>
+        <div>
+          <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>Implied Daily Move</p>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#60a5fa' }}>±{dailyMovePts.toFixed(0)}</span>
+          <span style={{ fontSize: 10, color: '#475569', marginLeft: 4 }}>({dailyMovePct.toFixed(2)}%)</span>
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: regimeColor, margin: 0, flex: 1, minWidth: 180, lineHeight: 1.5 }}>{regimeNote}</p>
+    </div>
+  );
+}
+
+// ─── Cumulative Option Flow Delta (CVD analog for options) ───────────────────
+// True CVD requires aggressor tape data we don't have. Instead, use cumulative
+// (PE_vol - CE_vol) which captures option-side directional positioning. Plot
+// against price to detect divergences:
+//   Price ↑ + Flow ↑   → confirmed up-move
+//   Price ↑ + Flow ↓   → BEARISH DIVERGENCE — call buyers exhausting / put writers
+//   Price ↓ + Flow ↓   → confirmed down-move
+//   Price ↓ + Flow ↑   → BULLISH DIVERGENCE — put buyers exhausting / call writers
+// ─── Option Flow Decomposition — premium-aware buyer/writer separation ───────
+// Replaces the naive cumulative (PE_vol - CE_vol) CVD with a proper four-quadrant
+// classification per strike, per bar, per side. Each (ΔOI sign × ΔLTP sign) maps
+// to one of: Call/Put Buying, Writing, Short Covering, or Long Unwinding. Each
+// quadrant has a known directional implication, so we can sum bullish vs bearish
+// contributors instead of conflating them.
+//
+// Inputs:
+//   strikeHistory — strike_pcr_history snapshots: [{time, strikes:{[strike]:{ce_oi,pe_oi,ce_ltp,pe_ltp,...}}}]
+//   atm           — current ATM strike
+//   symbol        — 'NIFTY' or 'BANKNIFTY' (for noise threshold)
+//
+// Why strike_pcr_history (and not intraday_history): we need per-strike LTP per
+// snapshot to read the premium move that disambiguates buyer flow from writer
+// flow. strike_pcr_history has it; intraday_history.strikes only has OI/vol.
+function OptionFlowDecomp(props) {
+  var strikeHistory = props.strikeHistory || [];
+  var atm           = props.atm           || 0;
+  var symbol        = props.symbol        || 'NIFTY';
+
+  if (strikeHistory.length < 4 || !atm) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
+                    padding: '14px 20px' }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#475569', margin: '0 0 4px',
+                    textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Option Flow Decomposition
+        </p>
+        <p style={{ fontSize: 12, color: '#334155', margin: 0 }}>
+          Building data — need 4+ strike snapshots and ATM strike
+        </p>
+      </div>
+    );
+  }
+
+  // ── Configuration ──────────────────────────────────────────────────────────
+  var step       = symbol === 'BANKNIFTY' ? 100 : 50;
+  var noiseFloor = symbol === 'BANKNIFTY' ? 800  : 1500;   // |ΔOI| floor per strike per bar
+  var ltpFloor   = 0.05;                                    // |ΔLTP| floor (₹) — below = noise
+  var freshWt    = 1.0;                                     // weight for fresh positioning
+  var closeWt    = 0.5;                                     // weight for closing flow (covering/unwinding)
+
+  // Strikes in scope: ATM ±5
+  var scopeStrikes = [];
+  for (var off = -5; off <= 5; off++) scopeStrikes.push(atm + off * step);
+
+  // ── Classify a (side, dOI, dLTP) into a flow type ──
+  // Returns { type, bullish, bearish, weight } where bullish/bearish are
+  // multiplied by |dOI| × weight to get the contribution.
+  function classify(side, dOI, dLTP) {
+    if (Math.abs(dOI) < noiseFloor || Math.abs(dLTP) < ltpFloor) return null;
+    var oiUp = dOI > 0, oiDn = dOI < 0;
+    var ltpUp = dLTP > 0, ltpDn = dLTP < 0;
+    var mag = Math.abs(dOI);
+
+    if (side === 'CE') {
+      if (oiUp && ltpUp) return { type: 'Call Buying',         bullish: mag * freshWt, bearish: 0,             code: 'CB' };
+      if (oiUp && ltpDn) return { type: 'Call Writing',        bullish: 0,             bearish: mag * freshWt, code: 'CW' };
+      if (oiDn && ltpUp) return { type: 'Call Short Covering', bullish: mag * closeWt, bearish: 0,             code: 'CSC' };
+      if (oiDn && ltpDn) return { type: 'Call Long Unwinding', bullish: 0,             bearish: mag * closeWt, code: 'CLU' };
+    } else {
+      if (oiUp && ltpUp) return { type: 'Put Buying',          bullish: 0,             bearish: mag * freshWt, code: 'PB' };
+      if (oiUp && ltpDn) return { type: 'Put Writing',         bullish: mag * freshWt, bearish: 0,             code: 'PW' };
+      if (oiDn && ltpUp) return { type: 'Put Short Covering',  bullish: 0,             bearish: mag * closeWt, code: 'PSC' };
+      if (oiDn && ltpDn) return { type: 'Put Long Unwinding',  bullish: mag * closeWt, bearish: 0,             code: 'PLU' };
+    }
+    return null;
+  }
+
+  // ── Walk consecutive snapshots, decompose each bar ─────────────────────────
+  var bars = [];   // [{time, bullish, bearish, contributions:[{strike,side,type,mag,weight}]}]
+  for (var i = 1; i < strikeHistory.length; i++) {
+    var prev = strikeHistory[i - 1];
+    var curr = strikeHistory[i];
+    if (!prev.strikes || !curr.strikes) continue;
+
+    var bull = 0, bear = 0;
+    var contribs = [];
+
+    scopeStrikes.forEach(function(strike) {
+      var pE = prev.strikes[String(strike)];
+      var cE = curr.strikes[String(strike)];
+      if (!pE || !cE || typeof pE !== 'object' || typeof cE !== 'object') return;
+
+      ['CE', 'PE'].forEach(function(side) {
+        var oiKey  = side === 'CE' ? 'ce_oi'  : 'pe_oi';
+        var ltpKey = side === 'CE' ? 'ce_ltp' : 'pe_ltp';
+        var pOI  = pE[oiKey]  || 0;
+        var cOI  = cE[oiKey]  || 0;
+        var pLTP = pE[ltpKey] || 0;
+        var cLTP = cE[ltpKey] || 0;
+        if (!pOI || !cOI || !pLTP || !cLTP) return;
+        var dOI  = cOI  - pOI;
+        var dLTP = cLTP - pLTP;
+        var cls  = classify(side, dOI, dLTP);
+        if (!cls) return;
+        bull += cls.bullish;
+        bear += cls.bearish;
+        contribs.push({ strike: strike, side: side, type: cls.type, code: cls.code, mag: Math.abs(dOI), dLTP: dLTP });
+      });
+    });
+
+    bars.push({ time: curr.time, bullish: bull, bearish: bear, net: bull - bear, contributions: contribs });
+  }
+
+  if (bars.length < 2) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
+                    padding: '14px 20px' }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#475569', margin: '0 0 4px',
+                    textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Option Flow Decomposition
+        </p>
+        <p style={{ fontSize: 12, color: '#334155', margin: 0 }}>
+          Decomposing — collecting more bars
+        </p>
+      </div>
+    );
+  }
+
+  // ── Cumulative net flow over session ──
+  var cum = 0;
+  bars.forEach(function(b) { cum += b.net; b.cum = cum; });
+  var lastCum = bars[bars.length - 1].cum;
+
+  // ── Divergence detection: compare slope of cum flow vs slope of "spot" ──
+  // We don't have spot directly here, but we have ATM strike movement (atm shifts
+  // when spot moves enough). A cleaner read is: compare last 4 bars' net flow
+  // direction vs cumulative ATM strike change. Simpler: just look at the cum's
+  // recent slope vs its longer-term direction.
+  function slope(vals) {
+    if (vals.length < 2) return 0;
+    return vals[vals.length - 1] - vals[0];
+  }
+  var lookback = Math.min(6, bars.length);
+  var recentBars = bars.slice(-lookback);
+  var recentCum  = slope(recentBars.map(function(b) { return b.cum; }));
+  var olderBars  = bars.slice(-lookback * 2, -lookback);
+  var olderCum   = olderBars.length > 0 ? slope(olderBars.map(function(b) { return b.cum; })) : 0;
+
+  // Classification thresholds
+  var FLOW_DEAD = noiseFloor * 2;
+  var stateLabel, stateColor, stateNote;
+  if (Math.abs(recentCum) < FLOW_DEAD && Math.abs(lastCum) < FLOW_DEAD * 3) {
+    stateLabel = 'NEUTRAL FLOW';
+    stateColor = '#64748b';
+    stateNote  = 'No clear directional positioning · waiting for break';
+  } else if (recentCum > FLOW_DEAD && olderCum < -FLOW_DEAD) {
+    stateLabel = 'BULLISH REVERSAL';
+    stateColor = '#4ade80';
+    stateNote  = 'Flow turning bullish after bearish stretch · institutional rotation';
+  } else if (recentCum < -FLOW_DEAD && olderCum > FLOW_DEAD) {
+    stateLabel = 'BEARISH REVERSAL';
+    stateColor = '#f87171';
+    stateNote  = 'Flow turning bearish after bullish stretch · institutional rotation';
+  } else if (lastCum > FLOW_DEAD * 3 && recentCum > 0) {
+    stateLabel = 'SUSTAINED BULLISH';
+    stateColor = '#4ade80';
+    stateNote  = 'Cumulative bullish positioning · CE buyers and PE writers driving';
+  } else if (lastCum < -FLOW_DEAD * 3 && recentCum < 0) {
+    stateLabel = 'SUSTAINED BEARISH';
+    stateColor = '#f87171';
+    stateNote  = 'Cumulative bearish positioning · PE buyers and CE writers driving';
+  } else if (recentCum > FLOW_DEAD) {
+    stateLabel = 'BULLISH FLOW';
+    stateColor = '#a3e635';
+    stateNote  = 'Recent bars net bullish';
+  } else if (recentCum < -FLOW_DEAD) {
+    stateLabel = 'BEARISH FLOW';
+    stateColor = '#f59e0b';
+    stateNote  = 'Recent bars net bearish';
+  } else {
+    stateLabel = 'MIXED';
+    stateColor = '#a78bfa';
+    stateNote  = 'Conflicting flows across strikes';
+  }
+
+  // ── Last bar breakdown — what's happening right now ────────────────────────
+  var lastBar = bars[bars.length - 1];
+  var typeAggregates = {};  // type → total mag
+  lastBar.contributions.forEach(function(c) {
+    if (!typeAggregates[c.code]) typeAggregates[c.code] = { type: c.type, code: c.code, total: 0, count: 0, strikes: [] };
+    typeAggregates[c.code].total += c.mag;
+    typeAggregates[c.code].count += 1;
+    typeAggregates[c.code].strikes.push(c.strike);
+  });
+  var lastBarRows = Object.keys(typeAggregates)
+    .map(function(k) { return typeAggregates[k]; })
+    .sort(function(a, b) { return b.total - a.total; });
+
+  function typeColor(code) {
+    // Bullish codes
+    if (code === 'CB' || code === 'PW' || code === 'CSC' || code === 'PLU') return '#4ade80';
+    // Bearish codes
+    return '#f87171';
+  }
+  function typeIcon(code) {
+    if (code === 'CB')  return '📈';
+    if (code === 'PW')  return '🛡';
+    if (code === 'CSC') return '⚡';
+    if (code === 'PLU') return '↘';
+    if (code === 'PB')  return '📉';
+    if (code === 'CW')  return '🚧';
+    if (code === 'PSC') return '⚡';
+    if (code === 'CLU') return '↗';
+    return '·';
+  }
+  function fmtMag(n) {
+    var a = Math.abs(n);
+    if (a >= 100000) return (n > 0 ? '+' : '') + (n / 100000).toFixed(1) + 'L';
+    if (a >= 1000)   return (n > 0 ? '+' : '') + (n / 1000).toFixed(0) + 'K';
+    return (n > 0 ? '+' : '') + n;
+  }
+
+  // ── Chart: cumulative net flow as area, with bullish/bearish stacked bars ──
+  var w = 700, h = 140, padL = 50, padR = 60, padT = 12, padB = 22;
+  var cW = w - padL - padR, cH = h - padT - padB;
+
+  var cums    = bars.map(function(b) { return b.cum; });
+  var fMin    = Math.min.apply(null, cums.concat([0]));
+  var fMax    = Math.max.apply(null, cums.concat([0]));
+  var fAbsMax = Math.max(Math.abs(fMin), Math.abs(fMax)) || 1;
+
+  function px(i)    { return padL + (i / Math.max(bars.length - 1, 1)) * cW; }
+  function pyCum(v) { return padT + cH/2 - (v / fAbsMax) * (cH/2); }
+
+  var cumPts = bars.map(function(b, i) { return px(i) + ',' + pyCum(b.cum); }).join(' ');
+  var cumColor = lastCum >= 0 ? '#4ade80' : '#f87171';
+  var fillPts = padL + ',' + pyCum(0) + ' ' + cumPts + ' ' + (padL + cW) + ',' + pyCum(0);
+
+  // Per-bar net mini bars (stacked bullish vs bearish)
+  var barW = (cW / bars.length) * 0.6;
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b',
+                  borderLeft: '4px solid ' + stateColor, borderRadius: 12,
+                  padding: '14px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', margin: '0 0 2px',
+                      textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Option Flow Decomposition · Premium-Aware
+          </p>
+          <p style={{ fontSize: 9, color: '#475569', margin: 0 }}>
+            ATM ±5 strikes · classifies each (ΔOI × ΔLTP) into Buyer/Writer/Cover/Unwind · separates flow types instead of conflating volume
+          </p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: stateColor, padding: '3px 10px', borderRadius: 6,
+                         background: stateColor + '15', border: '1px solid ' + stateColor + '44' }}>
+            {stateLabel}
+          </span>
+          <p style={{ fontSize: 10, color: '#64748b', margin: '4px 0 0' }}>
+            Cum Net Flow: <span style={{ color: cumColor, fontWeight: 700 }}>{fmtMag(lastCum)}</span>
+          </p>
+        </div>
+      </div>
+
+      <p style={{ fontSize: 11, color: stateColor, margin: '0 0 10px', lineHeight: 1.5 }}>{stateNote}</p>
+
+      {/* Cumulative net flow chart */}
+      <svg width={w} height={h} viewBox={'0 0 ' + w + ' ' + h} style={{ width: '100%', maxWidth: w }}>
+        {/* Per-bar bullish (green) and bearish (red) bars */}
+        {bars.map(function(b, i) {
+          var x  = px(i) - barW / 2;
+          var bullH = (b.bullish / fAbsMax) * (cH / 2);
+          var bearH = (b.bearish / fAbsMax) * (cH / 2);
+          var zero  = pyCum(0);
+          return (
+            <g key={i}>
+              {bullH > 0 && <rect x={x} y={zero - bullH} width={barW} height={bullH} fill="#4ade80" opacity="0.35" />}
+              {bearH > 0 && <rect x={x} y={zero}         width={barW} height={bearH} fill="#f87171" opacity="0.35" />}
+            </g>
+          );
+        })}
+
+        {/* Zero line */}
+        <line x1={padL} y1={pyCum(0)} x2={padL + cW} y2={pyCum(0)}
+              stroke="#334155" strokeWidth="1" />
+
+        {/* Cumulative line */}
+        <polygon points={fillPts} fill={cumColor} opacity="0.10" />
+        <polyline points={cumPts} fill="none" stroke={cumColor} strokeWidth="2" />
+
+        {/* Y-axis labels */}
+        <text x={padL - 4} y={pyCum(fAbsMax) + 3}  fill="#4ade80" fontSize="9" textAnchor="end" fontFamily="monospace">+{(fAbsMax/1000).toFixed(0)}K</text>
+        <text x={padL - 4} y={pyCum(0) + 3}        fill="#475569" fontSize="9" textAnchor="end" fontFamily="monospace">0</text>
+        <text x={padL - 4} y={pyCum(-fAbsMax) + 3} fill="#f87171" fontSize="9" textAnchor="end" fontFamily="monospace">-{(fAbsMax/1000).toFixed(0)}K</text>
+
+        {/* Right-side cum value */}
+        <text x={padL + cW + 4} y={pyCum(lastCum) + 3} fill={cumColor} fontSize="10" fontWeight="700" fontFamily="monospace">cum</text>
+
+        {/* X-axis */}
+        <text x={padL}      y={h - 6} fill="#475569" fontSize="9" fontFamily="monospace">{bars[0].time || ''}</text>
+        <text x={padL + cW} y={h - 6} fill="#475569" fontSize="9" textAnchor="end" fontFamily="monospace">{lastBar.time || ''}</text>
+
+        {/* Legend */}
+        <g transform={'translate(' + (padL + 8) + ', ' + (padT + 4) + ')'}>
+          <rect width="3" height="10" fill="#4ade80" opacity="0.5" />
+          <text x="8" y="9" fill="#94a3b8" fontSize="10">Bullish flow</text>
+          <rect x="80" width="3" height="10" fill="#f87171" opacity="0.5" />
+          <text x="88" y="9" fill="#94a3b8" fontSize="10">Bearish flow</text>
+          <rect x="170" width="3" height="10" fill={cumColor} />
+          <text x="178" y="9" fill="#94a3b8" fontSize="10">Cumulative net</text>
+        </g>
+      </svg>
+
+      {/* ── Last bar breakdown — what's driving the most recent move ── */}
+      <div style={{ marginTop: 12 }}>
+        <p style={{ fontSize: 9, color: '#475569', margin: '0 0 6px',
+                    fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Latest Bar ({lastBar.time}) — Flow Composition
+          {lastBarRows.length === 0 && <span style={{ marginLeft: 8, color: '#334155', fontWeight: 400 }}>· no flow above noise threshold</span>}
+        </p>
+        {lastBarRows.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
+            {lastBarRows.map(function(row) {
+              var col = typeColor(row.code);
+              return (
+                <div key={row.code} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                                             background: '#1e293b', borderRadius: 6,
+                                             borderLeft: '3px solid ' + col }}>
+                  <span style={{ fontSize: 14 }}>{typeIcon(row.code)}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: col }}>{row.type}</p>
+                    <p style={{ margin: 0, fontSize: 9, color: '#64748b' }}>
+                      {row.count} strike{row.count > 1 ? 's' : ''} · {row.strikes.slice(0, 4).join(', ')}{row.strikes.length > 4 ? '…' : ''}
+                    </p>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: col, fontFamily: 'monospace' }}>
+                    {fmtMag(row.total)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <p style={{ fontSize: 9, color: '#334155', margin: '10px 0 0', lineHeight: 1.5 }}>
+        Bullish: Call Buying (ΔOI↑ ΔLTP↑) · Put Writing (ΔOI↑ ΔLTP↓) · Call Short Covering (ΔOI↓ ΔLTP↑, ½ wt) · Put Long Unwinding (ΔOI↓ ΔLTP↓, ½ wt)<br/>
+        Bearish: Put Buying · Call Writing · Put Short Covering (½ wt) · Call Long Unwinding (½ wt)<br/>
+        Noise floor: |ΔOI| ≥ {noiseFloor.toLocaleString()} per strike per bar · |ΔLTP| ≥ ₹{ltpFloor}
+      </p>
+    </div>
+  );
+}
+
+// ─── Spot Context — volume profile + key intraday levels ─────────────────────
+// Builds a session volume profile from intraday_history snapshots, identifies
+// POC (point of control), VAH/VAL (value area high/low containing 70% of vol),
+// today's high/low, and shows where spot sits relative to each. This tells
+// the buyer whether their entry is at a structural level or in chop.
+function SpotContext(props) {
+  var intradayHistory = props.intradayHistory || [];
+  var spot            = props.spot || 0;
+  var symbol          = props.symbol || 'NIFTY';
+
+  if (intradayHistory.length < 10 || !spot) {
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12,
+                    padding: '14px 20px' }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#475569', margin: '0 0 4px',
+                    textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Spot Context — Session Levels
+        </p>
+        <p style={{ fontSize: 12, color: '#334155', margin: 0 }}>
+          Building intraday profile — need 10+ snapshots
+        </p>
+      </div>
+    );
+  }
+
+  // ── Build volume profile ──────────────────────────────────────────────────
+  // Bin price into buckets, sum (call_vol + put_vol) per bucket.
+  var binSize = symbol === 'BANKNIFTY' ? 50 : 25;
+  var bins = {};
+  var allPrices = [];
+  intradayHistory.forEach(function(s) {
+    var p = s.price || 0;
+    if (!p) return;
+    allPrices.push(p);
+    var key = Math.floor(p / binSize) * binSize;
+    var v   = (s.call_vol || 0) + (s.put_vol || 0);
+    bins[key] = (bins[key] || 0) + v;
+  });
+
+  if (allPrices.length === 0) return null;
+
+  var hi = Math.max.apply(null, allPrices);
+  var lo = Math.min.apply(null, allPrices);
+
+  // POC = bin with max volume
+  var binKeys = Object.keys(bins).map(function(k) { return parseInt(k, 10); }).sort(function(a, b) { return a - b; });
+  var pocBin = binKeys[0], pocVol = 0;
+  binKeys.forEach(function(k) { if (bins[k] > pocVol) { pocVol = bins[k]; pocBin = k; } });
+
+  // VAH/VAL: expand from POC outward until 70% of total volume captured
+  var totalVol = binKeys.reduce(function(a, k) { return a + bins[k]; }, 0);
+  var target = totalVol * 0.7;
+  var captured = pocVol;
+  var lowIdx  = binKeys.indexOf(pocBin);
+  var highIdx = lowIdx;
+  while (captured < target && (lowIdx > 0 || highIdx < binKeys.length - 1)) {
+    var canDown = lowIdx > 0;
+    var canUp   = highIdx < binKeys.length - 1;
+    var volDown = canDown ? bins[binKeys[lowIdx - 1]]  : -1;
+    var volUp   = canUp   ? bins[binKeys[highIdx + 1]] : -1;
+    if (volDown >= volUp && canDown) { lowIdx--; captured += volDown; }
+    else if (canUp)                  { highIdx++; captured += volUp; }
+    else if (canDown)                { lowIdx--; captured += volDown; }
+    else break;
+  }
+  var val = binKeys[lowIdx];
+  var vah = binKeys[highIdx] + binSize;  // top edge of last bin
+  var poc = pocBin + binSize / 2;        // middle of POC bin
+
+  // ── Distance from spot to each level ──
+  function diff(level) { return Math.round(spot - level); }
+  var levels = [
+    { name: 'Today High', value: hi,  d: diff(hi),  type: 'H' },
+    { name: 'VAH',        value: vah, d: diff(vah), type: 'V' },
+    { name: 'POC',        value: poc, d: diff(poc), type: 'P' },
+    { name: 'VAL',        value: val, d: diff(val), type: 'V' },
+    { name: 'Today Low',  value: lo,  d: diff(lo),  type: 'L' },
+  ];
+
+  // ── Classify spot position ──
+  var nearThresh = symbol === 'BANKNIFTY' ? 60 : 25;
+  var contextLabel = '';
+  var contextColor = '#64748b';
+  if (Math.abs(spot - hi) <= nearThresh) {
+    contextLabel = 'AT SESSION HIGH — resistance, breakout watch';
+    contextColor = '#f59e0b';
+  } else if (Math.abs(spot - lo) <= nearThresh) {
+    contextLabel = 'AT SESSION LOW — support, breakdown watch';
+    contextColor = '#f59e0b';
+  } else if (Math.abs(spot - vah) <= nearThresh) {
+    contextLabel = 'AT VAH — value-area resistance';
+    contextColor = '#f87171';
+  } else if (Math.abs(spot - val) <= nearThresh) {
+    contextLabel = 'AT VAL — value-area support';
+    contextColor = '#4ade80';
+  } else if (Math.abs(spot - poc) <= nearThresh) {
+    contextLabel = 'AT POC — magnet level, low directional edge';
+    contextColor = '#a78bfa';
+  } else if (spot > vah) {
+    contextLabel = 'ABOVE VAH — accepted higher, bullish bias';
+    contextColor = '#4ade80';
+  } else if (spot < val) {
+    contextLabel = 'BELOW VAL — accepted lower, bearish bias';
+    contextColor = '#f87171';
+  } else {
+    contextLabel = 'INSIDE VALUE AREA — chop risk, no structural edge';
+    contextColor = '#64748b';
+  }
+
+  // ── Profile chart (horizontal bars stacked vertically by price) ──
+  var maxBinVol = Math.max.apply(null, binKeys.map(function(k) { return bins[k]; }));
+  var w = 280, h = 200, padL = 50, padR = 12, padT = 8, padB = 8;
+  var cW = w - padL - padR, cH = h - padT - padB;
+  var hiBin = binKeys[binKeys.length - 1] + binSize;
+  var loBin = binKeys[0];
+  var priceRange = hiBin - loBin || 1;
+
+  function py(price) { return padT + cH - ((price - loBin) / priceRange) * cH; }
+
+  return (
+    <div style={{ background: '#0f172a', border: '1px solid #1e293b',
+                  borderLeft: '4px solid ' + contextColor, borderRadius: 12,
+                  padding: '14px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', margin: '0 0 2px',
+                      textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Spot Context — Session Volume Profile
+          </p>
+          <p style={{ fontSize: 9, color: '#475569', margin: 0 }}>
+            Spot {spot.toLocaleString()} · POC, VAH/VAL from today's intraday volume
+          </p>
+        </div>
+        <span style={{ fontSize: 12, fontWeight: 800, color: contextColor, padding: '4px 12px', borderRadius: 6,
+                       background: contextColor + '15', border: '1px solid ' + contextColor + '44' }}>
+          {contextLabel}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        {/* Volume profile chart */}
+        <svg width={w} height={h} viewBox={'0 0 ' + w + ' ' + h}>
+          {/* Value area shading */}
+          <rect x={padL} y={py(vah)} width={cW} height={py(val) - py(vah)}
+                fill="#a78bfa" opacity="0.06" />
+
+          {/* Volume bars */}
+          {binKeys.map(function(k) {
+            var v = bins[k];
+            var barW = (v / maxBinVol) * cW;
+            var y = py(k + binSize);
+            var height = py(k) - py(k + binSize);
+            var isPOC = k === pocBin;
+            var col = isPOC ? '#a78bfa' : (k >= val && k < vah ? '#60a5fa' : '#475569');
+            return (
+              <rect key={k} x={padL} y={y + 1} width={barW} height={Math.max(1, height - 2)}
+                    fill={col} opacity={isPOC ? 0.95 : 0.55} />
+            );
+          })}
+
+          {/* Spot line */}
+          <line x1={padL} y1={py(spot)} x2={padL + cW} y2={py(spot)}
+                stroke="#facc15" strokeWidth="1.5" strokeDasharray="4,3" />
+          <text x={padL + cW + 2} y={py(spot) + 3} fill="#facc15" fontSize="9" fontWeight="700" fontFamily="monospace">
+            spot
+          </text>
+
+          {/* POC label */}
+          <text x={padL - 4} y={py(poc) + 3} fill="#a78bfa" fontSize="9" fontFamily="monospace" textAnchor="end" fontWeight="700">POC</text>
+          <text x={padL - 4} y={py(vah) + 3} fill="#60a5fa" fontSize="9" fontFamily="monospace" textAnchor="end">VAH</text>
+          <text x={padL - 4} y={py(val) + 3} fill="#60a5fa" fontSize="9" fontFamily="monospace" textAnchor="end">VAL</text>
+          <text x={padL - 4} y={py(hi) + 3}  fill="#475569" fontSize="9" fontFamily="monospace" textAnchor="end">H</text>
+          <text x={padL - 4} y={py(lo) + 3}  fill="#475569" fontSize="9" fontFamily="monospace" textAnchor="end">L</text>
+        </svg>
+
+        {/* Levels table */}
+        <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {levels.map(function(lv) {
+            var col = lv.type === 'P' ? '#a78bfa'
+                    : lv.type === 'V' ? '#60a5fa'
+                    : '#94a3b8';
+            var dCol = '#94a3b8';
+            return (
+              <div key={lv.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
+                                          background: '#1e293b', borderRadius: 6, fontSize: 11 }}>
+                <span style={{ color: col, fontWeight: 700, minWidth: 80 }}>{lv.name}</span>
+                <span style={{ color: '#f1f5f9', fontFamily: 'monospace', fontWeight: 600, minWidth: 70 }}>
+                  {Math.round(lv.value).toLocaleString()}
+                </span>
+                <span style={{ color: dCol, fontFamily: 'monospace' }}>
+                  {lv.d > 0 ? '↓' : lv.d < 0 ? '↑' : '·'}{Math.abs(lv.d)}
+                </span>
+                <span style={{ color: '#475569', fontSize: 9 }}>
+                  {lv.d === 0 ? 'at spot' : lv.d > 0 ? 'pts below spot' : 'pts above spot'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <p style={{ fontSize: 9, color: '#334155', margin: '10px 0 0' }}>
+        POC = highest-volume price · Value Area = 70% of session volume around POC · {binSize}-pt bins
+      </p>
+    </div>
+  );
+}
+
+// ─── OTM Positioning Intelligence ───────────────────────────────────────────
+
 function OTMPositioning(props) {
-  var chain          = props.chain          || [];   // full_chain rows — each has strike, is_atm, ce_iv, pe_iv, ce_oi, pe_oi, ce_chg_oi, pe_chg_oi
-  var strikeHistory  = props.strikeHistory  || [];   // [{time, strikes:{[strike]:{ce_iv,pe_iv,ce_oi,pe_oi,...}}}]
+  var chain          = props.chain          || [];   // full_chain rows — strike, is_atm, ce_iv, pe_iv, ce_oi, pe_oi, ce_chg_oi, pe_chg_oi, ce_ltp, pe_ltp
+  var strikeHistory  = props.strikeHistory  || [];   // [{time, strikes:{[strike]:{ce_iv,pe_iv,ce_oi,pe_oi,ce_ltp,pe_ltp,...}}}]
   var vix            = props.vix            || 0;    // India VIX current value
   var atm            = props.atm            || 0;    // ATM strike
 
-  // ── helpers ────────────────────────────────────────────────────────────────
-  function fmtOI(n) {
-    if (!n && n !== 0) return '—';
-    var sign = n < 0 ? '-' : '+';
-    var abs  = Math.abs(n);
-    if (abs >= 100000) return sign + (abs / 100000).toFixed(1) + 'L';
-    if (abs >= 1000)   return sign + (abs / 1000).toFixed(0) + 'K';
-    return (n >= 0 ? '+' : '') + n;
-  }
+  // ── React hooks (must run on every render, before any early return) ───────
+  var [openGloss, setOpenGloss] = React.useState(null);
 
+  // ── helpers ────────────────────────────────────────────────────────────────
   function pct(val, base) {
     if (!base || base === 0) return 0;
     return ((val - base) / Math.abs(base)) * 100;
   }
+  function median(arr) {
+    if (!arr || arr.length === 0) return null;
+    var a = arr.slice().sort(function(x, y) { return x - y; });
+    var m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m-1] + a[m]) / 2;
+  }
 
   // ── select OTM strikes: ATM ±5 (11 strikes total) ──────────────────────────
-  // chain is sorted by strike; find ATM index then pick neighbours
   var sorted   = chain.slice().sort(function(a, b) { return a.strike - b.strike; });
   var atmIdx   = sorted.findIndex(function(r) { return r.strike === atm; });
   if (atmIdx < 0) atmIdx = sorted.findIndex(function(r) { return r.is_atm; });
+
+  // Bail rather than scan wrong strikes — was a silent correctness bug
+  if (atmIdx < 0) {
+    if (!chain.length || !atm) return null;
+    return (
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 16 }}>
+        <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>📡 OTM Positioning — ATM strike not found in chain. Waiting for next snapshot.</p>
+      </div>
+    );
+  }
 
   var indices  = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
   var strikes  = indices
     .map(function(offset) { return sorted[atmIdx + offset]; })
     .filter(Boolean);
 
-  // ── B1: locked 10:00–10:15 baseline (first snapshot at or after 10:00) ────
-  // We derive B1 from strikeHistory: average of snapshots between 10:00–10:15
+  // ── B1: locked 10:00–10:15 baseline — IV and LTP ──────────────────────────
+  // Baseline must be stable: require at least 3 snapshots in the window before
+  // any signal fires. Before that, return state: 'warming up'.
   var b1Snaps = strikeHistory.filter(function(s) {
-    return s.time >= '10:00' && s.time <= '10:15';
+    return typeof s.time === 'string' && s.time >= '10:00' && s.time <= '10:15';
   });
-  // Fallback: use first snapshot if none in window yet
-  if (b1Snaps.length === 0 && strikeHistory.length > 0) b1Snaps = [strikeHistory[0]];
+  var warmingUp = b1Snaps.length < 3;
 
   function getB1IV(strike, side) {
     if (b1Snaps.length === 0) return null;
@@ -2116,9 +2864,23 @@ function OTMPositioning(props) {
     if (vals.length === 0) return null;
     return vals.reduce(function(a, b) { return a + b; }, 0) / vals.length;
   }
+  function getB1LTP(strike, side) {
+    if (b1Snaps.length === 0) return null;
+    var vals = b1Snaps.map(function(s) {
+      var e = s.strikes ? s.strikes[String(strike)] : null;
+      if (!e || typeof e !== 'object') return null;
+      return side === 'ce' ? (e.ce_ltp || null) : (e.pe_ltp || null);
+    }).filter(function(v) { return v !== null && v > 0; });
+    if (vals.length === 0) return null;
+    return vals.reduce(function(a, b) { return a + b; }, 0) / vals.length;
+  }
 
-  // ── B2: rolling 45-min baseline (last 15 snapshots @ 3-min = 45 min) ──────
-  var b2Snaps = strikeHistory.slice(-15);
+  // ── B2: rolling 45-min baseline — exclude current snapshot (no look-ahead) ─
+  // Use prior 15 snapshots (not including the current one) as baseline. Was
+  // previously slice(-15) which included the bar being tested against itself.
+  var b2Snaps = strikeHistory.length > 1
+    ? strikeHistory.slice(Math.max(0, strikeHistory.length - 16), -1)
+    : [];
 
   function getB2IV(strike, side) {
     if (b2Snaps.length === 0) return null;
@@ -2131,9 +2893,8 @@ function OTMPositioning(props) {
     return vals.reduce(function(a, b) { return a + b; }, 0) / vals.length;
   }
 
-  // ── B2 OI baseline: OI at session open (first snapshot) ──────────────────
+  // ── OI baseline: OI at session open (first snapshot) ──────────────────────
   var firstSnap = strikeHistory.length > 0 ? strikeHistory[0] : null;
-
   function getOpenOI(strike, side) {
     if (!firstSnap) return null;
     var e = firstSnap.strikes ? firstSnap.strikes[String(strike)] : null;
@@ -2141,8 +2902,9 @@ function OTMPositioning(props) {
     return side === 'ce' ? (e.ce_oi || null) : (e.pe_oi || null);
   }
 
-  // ── IV direction: tick-to-tick delta (last 2 snapshots) ─────────────────
-  // Used for display arrow only — driver uses B1Dev as primary signal
+  // ── IV tick direction — relative threshold scaled by IV level ─────────────
+  // Old code used absolute IV-pct thresholds (>0.2, >1) which are too tight on
+  // high-IV strikes and too loose on low-IV deep OTM. Now scaled to iv level.
   function ivDir(strike, side) {
     if (strikeHistory.length < 2) return '→';
     var last2  = strikeHistory.slice(-2);
@@ -2151,33 +2913,39 @@ function OTMPositioning(props) {
     if (!prev || !curr || typeof prev !== 'object' || typeof curr !== 'object') return '→';
     var prevIV = side === 'ce' ? (prev.ce_iv || 0) : (prev.pe_iv || 0);
     var currIV = side === 'ce' ? (curr.ce_iv || 0) : (curr.pe_iv || 0);
-    var diff   = currIV - prevIV;
-    if (diff > 1)    return '↑↑';
-    if (diff > 0.2)  return '↑';
-    if (diff < -1)   return '↓↓';
-    if (diff < -0.2) return '↓';
+    if (prevIV <= 0) return '→';
+    var rel = (currIV - prevIV) / prevIV;  // relative change
+    if (rel >  0.05) return '↑↑';   // >5% relative jump
+    if (rel >  0.012) return '↑';   // >1.2% relative
+    if (rel < -0.05) return '↓↓';
+    if (rel < -0.012) return '↓';
     return '→';
   }
 
-  // ── Driver: OI + IV matrix using B1Dev as primary IV signal ──────────────
-  // B1Dev = how far current IV has moved from the 10:00–10:15 session baseline.
-  // This is more reliable than tick-to-tick delta which is noisy at 3-min resolution.
-  // Tick delta used as secondary confirmation when B1Dev is ambiguous.
+  // ── OI thresholds — scaled by symbol (NIFTY 75-lot vs BANKNIFTY 15-lot) ────
+  // Use larger absolute thresholds than the old 500-contract floor. NIFTY F&O
+  // contracts move in much larger steps; 500 is well within MM hedge noise.
+  // For BANKNIFTY, scale appropriately to its smaller absolute OI.
+  var symFromAtm = atm > 30000 ? 'BANKNIFTY' : 'NIFTY';
+  var OI_FRESH   = symFromAtm === 'BANKNIFTY' ? 1500 : 3000;  // chgOI threshold
+  var OI_STRONG  = symFromAtm === 'BANKNIFTY' ? 5000 : 10000;
+
+  // ── Driver: BUYER ACTION matrix ────────────────────────────────────────────
+  // The old matrix returned OI/IV state labels (BUY/COVER/WRITE/UNWIND). This
+  // mixed writer-perspective events with buyer-perspective signals. New matrix
+  // returns BUYER ACTION:
   //
-  // IV direction classification (B1Dev primary, tick delta secondary):
-  //   IV UP   = B1Dev > +2%   OR  (B1Dev > 0 AND tick delta > 0.2)
-  //   IV DOWN = B1Dev < -2%   OR  (B1Dev < 0 AND tick delta < -0.2)
-  //   IV FLAT = everything else
+  //   ENTER  = OI↑ + IV↑  → fresh buyers + premium expanding, best entry
+  //   WAIT   = OI↓ + IV↑  → squeeze in progress, premium already lifted, wait
+  //                          for OI to rebuild before chasing
+  //   AVOID  = OI↑ + IV↓  → writers active, premium contracting, fading buyers
+  //   SKIP   = OI↓ + IV↓  → ambiguous (longs giving up vs writers profit-taking)
+  //   NOISE  = OI flat + IV↑  → MM quote shading, not real demand
+  //   DECAY  = OI flat + IV↓  → normal theta, no signal
   //
-  // OI direction:
-  //   OI UP   = chgOI > 500  (fresh contracts being added)
-  //   OI DOWN = chgOI < -500 (contracts being removed)
-  //
-  // Matrix:
-  //   BUY    = OI↑ + IV↑  → buyer lifting ask, premium rising
-  //   COVER  = OI↓ + IV↑  → writer forced to exit, IV rising despite OI falling = momentum
-  //   WRITE  = OI↑ + IV↓  → writer selling, premium falling = hostile to buyer
-  //   UNWIND = OI↓ + IV↓  → longs exiting, no interest
+  // IV direction uses B1Dev (session deviation) as primary, tick as secondary.
+  // Both must agree in sign for IV up/down — fixes the "+0.1% B1Dev with tick↑
+  // = BUY" noise band.
   function driver(row, side) {
     var iv    = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
     var b1iv  = getB1IV(row.strike, side);
@@ -2186,22 +2954,36 @@ function OTMPositioning(props) {
     var tickUp = tick === '↑' || tick === '↑↑';
     var tickDn = tick === '↓' || tick === '↓↓';
 
-    // IV direction — B1Dev primary
-    var ivUp = b1Dev > 2  || (b1Dev > 0   && tickUp);
-    var ivDn = b1Dev < -2 || (b1Dev < 0   && tickDn);
+    // IV direction: require magnitude AND consistency
+    // Up: B1Dev > 1% AND (tick rising OR B1Dev > 3%)
+    // This eliminates the asymmetric ">0 && tick" noise zone.
+    var ivUp = b1Dev > 1  && (tickUp || b1Dev > 3);
+    var ivDn = b1Dev < -1 && (tickDn || b1Dev < -3);
 
     var chgOI = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
-    var oiUp  = chgOI > 500;
-    var oiDn  = chgOI < -500;
+    var oiUp  = chgOI >  OI_FRESH;
+    var oiDn  = chgOI < -OI_FRESH;
 
-    if (oiUp && ivUp)  return { label: 'BUY',    color: side === 'ce' ? '#4ade80' : '#f87171', bias: side === 'ce' ? 'bullish' : 'bearish', buyerFriendly: true  };
-    if (oiDn && ivUp)  return { label: 'COVER',  color: '#f59e0b',                             bias: side === 'ce' ? 'bullish' : 'bearish', buyerFriendly: true  };
-    if (oiUp && ivDn)  return { label: 'WRITE',  color: '#64748b',                             bias: 'hostile',                             buyerFriendly: false };
-    if (oiDn && ivDn)  return { label: 'UNWIND', color: '#334155',                             bias: 'hostile',                             buyerFriendly: false };
-    // OI flat but IV has strong session signal — classify by IV alone
-    if (!oiUp && !oiDn && ivUp) return { label: 'IV↑',   color: side === 'ce' ? '#4ade8088' : '#f8717188', bias: side === 'ce' ? 'bullish' : 'bearish', buyerFriendly: true  };
-    if (!oiUp && !oiDn && ivDn) return { label: 'IV↓',   color: '#64748b88',                               bias: 'hostile',                             buyerFriendly: false };
-    return { label: '—', color: '#334155', bias: 'neutral', buyerFriendly: false };
+    // Buyer-action matrix
+    if (oiUp && ivUp)  return { action: 'ENTER',  bias: side === 'ce' ? 'bullish' : 'bearish', tier: 'primary',   note: 'fresh buyers + premium expanding' };
+    if (oiDn && ivUp)  return { action: 'WAIT',   bias: side === 'ce' ? 'bullish' : 'bearish', tier: 'caution',   note: 'squeeze in progress — wait for OI to rebuild' };
+    if (oiUp && ivDn)  return { action: 'AVOID',  bias: 'hostile',                              tier: 'hostile',   note: 'writers active — premium contracting' };
+    if (oiDn && ivDn)  return { action: 'SKIP',   bias: 'ambiguous',                            tier: 'ambiguous', note: 'longs exiting OR writers taking profit — no edge' };
+    if (!oiUp && !oiDn && ivUp) return { action: 'NOISE', bias: 'neutral', tier: 'noise', note: 'IV up but OI flat — likely quote shading' };
+    if (!oiUp && !oiDn && ivDn) return { action: 'DECAY', bias: 'neutral', tier: 'noise', note: 'IV down but OI flat — normal theta' };
+    return { action: '—', bias: 'neutral', tier: 'none', note: '' };
+  }
+
+  // Color table for driver actions — only ENTER gets the side color (full
+  // strength). Everything else is amber/grey because the buyer should not
+  // treat any other state as actionable.
+  function actionColor(action, side) {
+    if (action === 'ENTER') return side === 'ce' ? '#4ade80' : '#f87171';
+    if (action === 'WAIT')  return '#f59e0b';   // amber — be patient
+    if (action === 'AVOID') return '#94a3b8';   // grey — premium fading
+    if (action === 'SKIP')  return '#475569';   // dim — ambiguous
+    if (action === 'NOISE' || action === 'DECAY') return '#334155';  // dimmest
+    return '#334155';
   }
 
   function scoreComponent(val, thresholds) {
@@ -2210,85 +2992,124 @@ function OTMPositioning(props) {
     return pts;
   }
 
-  // ── Streak: consecutive snapshots with IV above B2 baseline ──────────────
+  // ── Streak: consecutive snapshots with IV above prior B2 (look-ahead-free) ─
   function getStreak(strike, side) {
-    if (strikeHistory.length < 2) return 0;
+    if (strikeHistory.length < 3) return 0;
     var count = 0;
     var snaps = strikeHistory.slice().reverse();
+    var missTolerance = 1;  // tolerate 1 missing snap before breaking
+    var misses = 0;
     for (var i = 0; i < snaps.length; i++) {
       var e  = snaps[i].strikes ? snaps[i].strikes[String(strike)] : null;
-      if (!e || typeof e !== 'object') break;
+      if (!e || typeof e !== 'object') {
+        misses++;
+        if (misses > missTolerance) break;
+        continue;
+      }
       var iv = side === 'ce' ? (e.ce_iv || 0) : (e.pe_iv || 0);
-      var b2 = getB2IV(strike, side);
-      if (b2 && iv > b2) { count++; } else { break; }
+      // Compute B2 from snapshots OLDER than snaps[i] — no look-ahead
+      var olderSnaps = snaps.slice(i + 1, i + 16);
+      var olderVals = olderSnaps.map(function(s) {
+        var en = s.strikes ? s.strikes[String(strike)] : null;
+        if (!en || typeof en !== 'object') return null;
+        return side === 'ce' ? (en.ce_iv || null) : (en.pe_iv || null);
+      }).filter(function(v) { return v !== null; });
+      if (olderVals.length === 0) break;
+      var olderB2 = olderVals.reduce(function(a, b) { return a + b; }, 0) / olderVals.length;
+      if (iv > olderB2) { count++; misses = 0; } else { break; }
     }
     return count;
   }
 
-  // ── BPI: Buyer Pressure Index (0–100) ─────────────────────────────────────
-  // Scores ONLY buyer-friendly conditions: BUY and COVER drivers.
-  // WRITE and UNWIND score 0 — they are hostile to option buyers.
-  //
-  // Components (max 100):
-  //   IV rising above B1 (session baseline)   0–25 pts  — IV demand vs whole day
-  //   IV rising above B2 (recent baseline)    0–25 pts  — IV demand recently
-  //   OI accumulation from open               0–20 pts  — position size building
-  //   OI velocity (chg_oi this snapshot)      0–15 pts  — speed of entry
-  //   IV rising streak (consecutive snaps)    0–15 pts  — sustained demand
-  function computePPI(row, side) {
-    var iv     = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
-    var vix_   = vix || 1;
-    var normIV = iv / vix_;
+  // ── Time-of-day theta pressure ─────────────────────────────────────────────
+  // After 14:00 IST, scale Entry Score down. After 15:00, scale further. Theta
+  // and gamma effects make signals less reliable late in the session.
+  function thetaMultiplier() {
+    var nowMin = (function() {
+      var d = new Date();
+      // IST = UTC+5:30
+      var utcMins = d.getUTCHours() * 60 + d.getUTCMinutes();
+      var istMins = (utcMins + 330) % 1440;
+      return istMins;
+    })();
+    if (nowMin >= 15 * 60)            return 0.50;  // after 15:00
+    if (nowMin >= 14 * 60 + 30)       return 0.65;  // after 14:30
+    if (nowMin >= 14 * 60)            return 0.80;  // after 14:00
+    if (nowMin >= 13 * 60)            return 0.92;  // after 13:00
+    return 1.00;                                    // before 13:00
+  }
+  var theta = thetaMultiplier();
 
+  // ── Entry Score (0–100) ────────────────────────────────────────────────────
+  // Replaces BPI. Scores ONLY ENTER and (capped) WAIT actions.
+  //
+  // Components (max 100, before theta scaling):
+  //   IV above B1 (session)               0–25 pts
+  //   IV above B2 (recent)                0–25 pts
+  //   OI build from open                  0–20 pts
+  //   OI velocity (chg_oi this snap)      0–15 pts
+  //   IV rising streak                    0–15 pts
+  //
+  //   WAIT cap: 40 pts (squeeze entries are not full ENTER signals)
+  //   Theta multiplier applied at the end (0.5–1.0 based on time of day)
+  function computeEntryScore(row, side) {
+    if (warmingUp) return 0;
+
+    var drv = driver(row, side);
+    if (drv.action !== 'ENTER' && drv.action !== 'WAIT') return 0;
+
+    var iv     = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
     var b1iv   = getB1IV(row.strike, side);
     var b2iv   = getB2IV(row.strike, side);
-    var b1Norm = b1iv ? b1iv / vix_ : null;
-    var b2Norm = b2iv ? b2iv / vix_ : null;
+    var b1Dev  = b1iv ? pct(iv, b1iv) : 0;
+    var b2Dev  = b2iv ? pct(iv, b2iv) : 0;
 
-    // Signed deviations — positive means IV is ABOVE baseline (buyer-friendly)
-    var b1DevSigned = b1Norm ? pct(normIV, b1Norm) : 0;
-    var b2DevSigned = b2Norm ? pct(normIV, b2Norm) : 0;
-
-    // Determine driver
-    var drv = driver(row, side);
-
-    // If driver is hostile to buyers (WRITE or UNWIND), score 0
-    // Buyer should not trade into falling IV regardless of OI
-    if (!drv.buyerFriendly && drv.label !== '—') return 0;
-
-    // IV score: only count POSITIVE deviations (IV above baseline = demand exists)
-    // Negative deviation = IV falling = bad for buyers, scores 0
-    var b1IVup = Math.max(0, b1DevSigned);
-    var b2IVup = Math.max(0, b2DevSigned);
+    // Only count POSITIVE deviations
+    var b1IVup = Math.max(0, b1Dev);
+    var b2IVup = Math.max(0, b2Dev);
 
     var b1Score = scoreComponent(b1IVup, [{min:0.5,pts:5},{min:1.5,pts:10},{min:3,pts:16},{min:5,pts:20},{min:8,pts:25}]);
     var b2Score = scoreComponent(b2IVup, [{min:0.5,pts:5},{min:1.5,pts:10},{min:3,pts:16},{min:5,pts:20},{min:8,pts:25}]);
 
-    // OI accumulation from session open (position size)
+    // OI accumulation from open
     var openOI = getOpenOI(row.strike, side);
     var currOI = side === 'ce' ? (row.ce_oi || 0) : (row.pe_oi || 0);
     var cumOI  = openOI ? currOI - openOI : 0;
     var cumPct = openOI && openOI > 0 ? (cumOI / openOI) * 100 : 0;
-    // For COVER driver, OI is falling — that's still bullish/bearish so use abs
+    // For ENTER we want positive cumOI; for WAIT (OI falling) use abs since
+    // the "rebuild" happens later — partial credit for prior build now exiting
     var oiScore = scoreComponent(Math.abs(cumPct), [{min:0.5,pts:4},{min:2,pts:8},{min:5,pts:14},{min:10,pts:20}]);
 
-    // OI velocity (speed of entry/exit this snapshot)
+    // OI velocity
     var chgOI    = side === 'ce' ? (row.ce_chg_oi || 0) : (row.pe_chg_oi || 0);
-    var velScore = scoreComponent(Math.abs(chgOI), [{min:300,pts:3},{min:1000,pts:7},{min:3000,pts:11},{min:7000,pts:15}]);
+    var velScore = scoreComponent(Math.abs(chgOI),
+      symFromAtm === 'BANKNIFTY'
+        ? [{min:1500,pts:3},{min:5000,pts:7},{min:15000,pts:11},{min:30000,pts:15}]
+        : [{min:3000,pts:3},{min:10000,pts:7},{min:25000,pts:11},{min:50000,pts:15}]);
 
-    // IV rising streak — only counts when IV is genuinely above B2
+    // Streak
     var streak      = getStreak(row.strike, side);
     var streakScore = scoreComponent(streak, [{min:2,pts:3},{min:4,pts:7},{min:6,pts:11},{min:8,pts:15}]);
 
-    return Math.min(100, b1Score + b2Score + oiScore + velScore + streakScore);
+    var raw = b1Score + b2Score + oiScore + velScore + streakScore;
+    if (drv.action === 'WAIT') raw = Math.min(40, raw);  // cap WAIT entries
+    return Math.round(Math.min(100, raw) * theta);
   }
 
+  // ── Premium economics — what the buyer actually pays ──────────────────────
+  // Returns LTP now, LTP at B1 baseline, ₹ change, and % change. This is what
+  // a buyer cares about — not IV percentage moves on deep OTM strikes that
+  // produce ₹2 of P&L.
+  function premiumEcon(row, side) {
+    var nowLtp = side === 'ce' ? (row.ce_ltp || 0) : (row.pe_ltp || 0);
+    var b1Ltp  = getB1LTP(row.strike, side);
+    if (!nowLtp || !b1Ltp) return { now: nowLtp, b1: b1Ltp, abs: null, pct: null };
+    var abs = nowLtp - b1Ltp;
+    var pc  = (abs / b1Ltp) * 100;
+    return { now: nowLtp, b1: b1Ltp, abs: abs, pct: pc };
+  }
 
-
-  // ── Skew shape — combines current gap + IV direction trend ──────────────────
-  // FLAT + IV rising on OTM  → accumulation (bullish for CE, bearish for PE)
-  // FLAT + IV falling on OTM → surface compressing, no strong signal
-  // STEEP + IV rising on ATM → ATM being bid, event/fear pricing
+  // ── Skew shape — combines current gap + IV direction trend ────────────────
   function skewShape(sidesRows, side) {
     var atmRow  = sidesRows.find(function(r) { return r.strike === atm || r.is_atm; });
     if (!atmRow) return null;
@@ -2300,7 +3121,6 @@ function OTMPositioning(props) {
     }, 0) / otmRows.length;
     var gap = atmIV - avgOTM;
 
-    // Check IV trend from history: compare last 2 snapshots for OTM avg IV
     var ivTrend = 'flat';
     if (strikeHistory.length >= 2) {
       var prev = strikeHistory[strikeHistory.length - 2];
@@ -2321,9 +3141,8 @@ function OTMPositioning(props) {
       }
     }
 
-    // Shape label combines gap + trend
     if (gap < 1) {
-      if (ivTrend === 'rising')  return 'FLAT↑'; // OTM IV rising toward ATM = accumulation
+      if (ivTrend === 'rising')  return 'FLAT↑'; // OTM IV rising = buyer accumulation on this side
       if (ivTrend === 'falling') return 'FLAT↓'; // OTM IV falling = writing/compression
       return 'FLAT';
     }
@@ -2331,114 +3150,18 @@ function OTMPositioning(props) {
     return 'STEEP';
   }
 
-  // ── Panel verdict ─────────────────────────────────────────────────────────
-  // Uses driver bias to determine true directional intent:
-  //   CE BUY / PE WRITE  → BULLISH (buyers entering calls, writers defending below)
-  //   PE BUY / CE WRITE  → BEARISH (buyers entering puts, writers capping upside)
-  //   CE WRITE + CE BUY  → mixed CE activity
-  function panelVerdict(rows) {
-    var ceRows = rows.filter(function(r) { return r.strike > atm; });
-    var peRows = rows.filter(function(r) { return r.strike < atm; });
-
-    // Buyer-focused: only rows where BPI >= 35 AND driver is buyer-friendly
-    function rowBias(r, side) {
-      var score = computePPI(r, side);
-      if (score < 35) return null;
-      var drv = driver(r, side);
-      // Only BUY and COVER are actionable for buyers
-      if (!drv.buyerFriendly) return null;
-      return drv.bias;
-    }
-
-    var ceBiases = ceRows.map(function(r) { return rowBias(r, 'ce'); }).filter(Boolean);
-    var peBiases = peRows.map(function(r) { return rowBias(r, 'pe'); }).filter(Boolean);
-
-    // Count bullish vs bearish signals across both sides
-    var bullCount = 0, bearCount = 0;
-    ceBiases.concat(peBiases).forEach(function(b) {
-      if (b === 'bullish') bullCount++;
-      if (b === 'bearish') bearCount++;
-    });
-
-    var ceScores = ceRows.map(function(r) { return computePPI(r, 'ce'); });
-    var peScores = peRows.map(function(r) { return computePPI(r, 'pe'); });
-    var ceAvg    = ceScores.length ? ceScores.reduce(function(a,b){return a+b;},0)/ceScores.length : 0;
-    var peAvg    = peScores.length ? peScores.reduce(function(a,b){return a+b;},0)/peScores.length : 0;
-    var strength = function(avg) { return avg >= 70 ? 'STRONG' : avg >= 40 ? 'MODERATE' : 'WEAK'; };
-    var topAvg   = Math.max(ceAvg, peAvg);
-
-    var total = bullCount + bearCount;
-    if (total === 0) {
-      return { text: 'NO SIGNIFICANT POSITIONING DETECTED', bias: '—', strength: '—', color: '#475569', state: 'none' };
-    }
-
-    // Need clear majority (60%+) to fire a directional verdict
-    if (bullCount >= 2 && bullCount > bearCount) {
-      // Which strikes are driving the bullish signal
-      var bullStrikes = ceRows.filter(function(r) { return rowBias(r,'ce') === 'bullish'; })
-        .concat(peRows.filter(function(r) { return rowBias(r,'pe') === 'bullish'; }))
-        .map(function(r) { return r.strike; });
-      // Distinguish BUY vs COVER for richer verdict text
-      var ceBuyCount  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='BUY'   && computePPI(r,'ce')>=35; }).length;
-      var ceCovCount  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='COVER' && computePPI(r,'ce')>=35; }).length;
-      var peBuyCount  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='BUY'   && computePPI(r,'pe')>=35; }).length;
-      var peCovCount  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='COVER' && computePPI(r,'pe')>=35; }).length;
-      var bullDriver  = (ceCovCount > 0 && ceBuyCount === 0) ? 'CALL SHORT COVERING' :
-                        (ceBuyCount > 0) ? 'CALL BUYING' : 'PUT WRITING UNWINDING';
-      return {
-        text: bullDriver + ' — WATCH ' + bullStrikes.join('–'),
-        bias: 'BULLISH', strength: strength(topAvg),
-        color: '#4ade80', state: topAvg >= 70 ? 'high' : 'early',
-      };
-    }
-    if (bearCount >= 2 && bearCount > bullCount) {
-      var bearStrikes = ceRows.filter(function(r) { return rowBias(r,'ce') === 'bearish'; })
-        .concat(peRows.filter(function(r) { return rowBias(r,'pe') === 'bearish'; }))
-        .map(function(r) { return r.strike; });
-      var peBuyC  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='BUY'   && computePPI(r,'pe')>=35; }).length;
-      var peCovC  = peRows.filter(function(r){ var d=driver(r,'pe'); return d.label==='COVER' && computePPI(r,'pe')>=35; }).length;
-      var ceBuyC  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='BUY'   && computePPI(r,'ce')>=35; }).length;
-      var ceCovC  = ceRows.filter(function(r){ var d=driver(r,'ce'); return d.label==='COVER' && computePPI(r,'ce')>=35; }).length;
-      var bearDriver = (peCovC > 0 && peBuyC === 0) ? 'PUT SHORT COVERING' :
-                       (peBuyC > 0) ? 'PUT BUYING' : 'CALL WRITING UNWINDING';
-      return {
-        text: bearDriver + ' — WATCH ' + bearStrikes.join('–'),
-        bias: 'BEARISH', strength: strength(topAvg),
-        color: '#f87171', state: topAvg >= 70 ? 'high' : 'early',
-      };
-    }
-    // Mixed signals
-    return {
-      text: 'MIXED SIGNALS — BOTH SIDES ACTIVE',
-      bias: 'NEUTRAL', strength: '—', color: '#f59e0b', state: 'early',
-    };
-  }
-
-  // ── Dominance ratio ───────────────────────────────────────────────────────
-  function dominance(rows) {
-    var ceRows   = rows.filter(function(r) { return r.strike > atm; });
-    var peRows   = rows.filter(function(r) { return r.strike < atm; });
-    var ceTotal  = ceRows.reduce(function(s,r){ return s + computePPI(r, 'ce'); }, 0);
-    var peTotal  = peRows.reduce(function(s,r){ return s + computePPI(r, 'pe'); }, 0);
-    var tot      = ceTotal + peTotal || 1;
-    return { cePct: Math.round((ceTotal/tot)*100), pePct: Math.round((peTotal/tot)*100) };
-  }
-
   // ── Glossary ───────────────────────────────────────────────────────────────
-  var [openGloss, setOpenGloss] = React.useState(null);
   var glossary = [
-    { term: 'Norm IV',   full: 'Normalised Implied Volatility',           desc: 'Strike IV divided by India VIX. Removes market-wide fear so you can isolate strike-specific demand. Comparable across strikes and days.' },
-    { term: 'vs B1',     full: 'Deviation from Settled Open (10:00–10:15)', desc: 'How much Norm IV has moved from the 10:00–10:15 settled baseline. High B1 deviation means the move is significant vs the whole session.' },
-    { term: 'vs B2',     full: 'Deviation from Rolling 45-min Baseline',  desc: 'How much Norm IV has moved in the last 45 mins. High B2 = fresh and active. High B1 + high B2 = sustained institutional accumulation.' },
-    { term: 'Cum OI Δ',  full: 'Cumulative OI Change from 9:15 Open',     desc: 'Total net OI added since open. Not snapshot-to-snapshot — this is the full session picture. Sustained build = institutional, not retail.' },
-    { term: 'Dir',       full: 'IV Direction (last 3-min snapshot)',       desc: '↑↑ rising fast (>1%), ↑ rising slowly, → flat, ↓ falling, ↓↓ falling fast. Velocity matters more than absolute level.' },
-    { term: 'Driver',    full: 'OI + IV Matrix — Buyer Perspective',       desc: 'BUY = OI↑ + IV↑ → buyer lifting the ask, best entry signal. COVER = OI↓ + IV↑ → writers forced to exit, strong momentum. WRITE = OI↑ + IV↓ → writers selling, IV falling — avoid buying here. UNWIND = OI↓ + IV↓ → longs leaving, no interest.' },
-    { term: 'Streak',    full: 'Consecutive Snapshots with IV Above B2',   desc: 'How many 3-min snapshots in a row show IV above the 45-min baseline. Only counts when driver is buyer-friendly. 4+ snaps = sustained demand = high confidence.' },
-    { term: 'BPI',       full: 'Buyer Pressure Index (0–100)',             desc: 'Scores ONLY buyer-friendly conditions (BUY + COVER drivers). WRITE and UNWIND score 0 — falling IV is hostile to buyers. Components: IV above B1 (25pts) + IV above B2 (25pts) + OI size (20pts) + OI velocity (15pts) + Streak (15pts).' },
-    { term: 'State',     full: 'Signal State',                             desc: '⚪ None: no buyer signal. 🟡 WATCH (35–69): buyer activity building, not yet confirmed. 🟢 CALL BUY / 🔴 PUT BUY (70+): strong buyer footprint, IV rising, OI confirming.' },
-    { term: 'CE / PE',   full: 'Call / Put Option',                        desc: 'CE = Call (buyer profits if price rises). PE = Put (buyer profits if price falls). OTM CE accumulation → upside positioning. OTM PE accumulation → downside/hedge.' },
-    { term: 'Skew',      full: 'Volatility Skew Shape',                    desc: 'FLAT↑ = OTM IV rising toward ATM = active accumulation. FLAT↓ = OTM IV falling = writing/compression. FLAT = stable. NORMAL = standard smile. STEEP = heavy protection demand.' },
-    { term: 'Dominance', full: 'CE vs PE Positioning Pressure Share',      desc: 'PPI-weighted share of total pressure across all strikes. CE 70%+ = clear bullish lean. PE 70%+ = clear bearish lean. Near 50/50 = balanced or event-driven.' },
+    { term: 'Action',     desc: 'ENTER (OI↑ + IV↑): fresh buyers + premium expanding — primary entry. WAIT (OI↓ + IV↑): squeeze in progress, easy money already moved — wait for OI to rebuild before chasing. AVOID (OI↑ + IV↓): writers active — premium contracting against you. SKIP (OI↓ + IV↓): ambiguous — could be longs giving up or writers profit-taking. NOISE/DECAY: OI flat — not actionable.' },
+    { term: 'Entry Score', desc: '0–100 buyer-perspective score. Only ENTER (full credit) and WAIT (capped at 40) score points. Components: IV above B1 baseline (25), IV above B2 recent (25), OI build (20), OI velocity (15), IV rising streak (15). Scaled down after 14:00 IST as theta and gamma effects degrade signal reliability.' },
+    { term: 'Premium Δ',  desc: 'Rupee change in option premium (LTP) since the 10:00–10:15 session baseline. This is what a buyer actually pays vs would have paid earlier. ₹+40 means the same option costs you ₹40 more now than at the baseline.' },
+    { term: 'B1',         desc: 'IV deviation from the 10:00–10:15 settled baseline. Requires at least 3 snapshots in the window before signals fire — earlier than that, the panel shows WARMING UP.' },
+    { term: 'B2',         desc: 'IV deviation from the rolling 45-min average (excluding the current bar — no look-ahead bias). Fresh, sustained moves show high B2.' },
+    { term: 'COI',        desc: 'Change in Open Interest this snapshot. Threshold: NIFTY ±3000, BANKNIFTY ±1500. Smaller moves are MM hedge-rebalancing noise, not real positioning.' },
+    { term: 'Cum OI',     desc: 'Total OI change from 9:15 open. Sustained build = institutional. Single-snapshot spikes without cumulative build = ephemeral.' },
+    { term: 'OI Confluence', desc: 'Two or more adjacent strikes on the same side with the same buyer-friendly action. Single-strike signals do not qualify — pure noise filter. Confirmed = opposite side has WRITE activity at adjacent strikes (defended floor/ceiling).' },
+    { term: 'Theta drag', desc: 'Multiplier applied to Entry Score based on time of day. Before 13:00 IST: 1.00. After 14:00: 0.80. After 14:30: 0.65. After 15:00: 0.50. Late-session signals are less reliable due to forced gamma effects.' },
+    { term: 'Skew',       desc: 'FLAT↑ = OTM IV rising toward ATM = active accumulation on this side. FLAT↓ = OTM IV falling = writing. NORMAL/STEEP = standard or fear-driven.' },
   ];
 
   if (!chain.length || !atm) return null;
@@ -2446,174 +3169,156 @@ function OTMPositioning(props) {
   var ceShape    = skewShape(strikes.filter(function(r){return r.strike >= atm;}), 'ce');
   var peShape    = skewShape(strikes.filter(function(r){return r.strike <= atm;}), 'pe');
 
-  // ── Diagnostic: log per-strike driver data to console ──────────────────────
-  // ── IV Environment indicator ─────────────────────────────────────────────
-  // Compares current avg IV (CE and PE separately) against B1 baseline
-  // Tells buyer whether conditions are favourable overall
+  // ── IV Environment — median (not mean) to resist single-strike outliers ──
   var ivEnv = (function() {
+    if (warmingUp) return { label: 'WARMING UP', color: '#64748b', icon: '⏳', desc: 'Building 10:00–10:15 baseline (need 3 snapshots) — signals start firing after 10:18.', divergence: null, ceDev: 0, peDev: 0 };
+
     var ceStrikes = strikes.filter(function(r) { return r && r.strike > atm; });
     var peStrikes = strikes.filter(function(r) { return r && r.strike < atm; });
-    function avgDev(rows, side) {
-      var vals = rows.map(function(r) {
+    function devs(rows, side) {
+      return rows.map(function(r) {
         var iv   = side === 'ce' ? (r.ce_iv || 0) : (r.pe_iv || 0);
         var b1iv = getB1IV(r.strike, side);
         if (!b1iv || b1iv === 0) return null;
         return ((iv - b1iv) / b1iv) * 100;
       }).filter(function(v) { return v !== null; });
-      if (!vals.length) return null;
-      return vals.reduce(function(a,b){return a+b;},0) / vals.length;
     }
-    var ceAvgDev   = avgDev(ceStrikes, 'ce');
-    var peAvgDev   = avgDev(peStrikes, 'pe');
-    var ceDev      = ceAvgDev !== null ? ceAvgDev : 0;
-    var peDev      = peAvgDev !== null ? peAvgDev : 0;
+    var ceDev = median(devs(ceStrikes, 'ce'));
+    var peDev = median(devs(peStrikes, 'pe'));
+    if (ceDev === null) ceDev = 0;
+    if (peDev === null) peDev = 0;
     var overallDev = (ceDev + peDev) / 2;
 
-    // ── Detect CE/PE divergence — directional surface repricing ──────────────
-    // CE IV rising + PE IV falling = surface repricing BULLISH
-    //   → call demand + put supply = upside positioning
-    // PE IV rising + CE IV falling = surface repricing BEARISH
-    //   → put demand + call supply = downside positioning
-    var DIVG_THRESH = 3; // each side must be at least 3% away from baseline
+    // Surface repricing detector
+    var DIVG_THRESH = 3;
     var ceBullish   = ceDev >  DIVG_THRESH;
     var ceBearish   = ceDev < -DIVG_THRESH;
-    var peBullish   = peDev < -DIVG_THRESH; // PE IV falling = put writing = bullish
-    var peBearish   = peDev >  DIVG_THRESH; // PE IV rising  = put buying  = bearish
+    var peBullish   = peDev < -DIVG_THRESH;  // PE IV falling = bullish
+    var peBearish   = peDev >  DIVG_THRESH;  // PE IV rising  = bearish
 
     if (ceBullish && peBullish) {
       return {
         label: 'REPRICING BULLISH', color: '#4ade80', icon: '📈',
-        desc: 'CE IV +' + ceDev.toFixed(1) + '% vs B1 · PE IV ' + peDev.toFixed(1) + '% vs B1 — call demand + put supply = upside positioning',
+        desc: 'CE IV +' + ceDev.toFixed(1) + '% vs B1 · PE IV ' + peDev.toFixed(1) + '% vs B1 — call demand + put supply',
         divergence: 'bullish', ceDev: ceDev, peDev: peDev,
       };
     }
     if (peBearish && ceBearish) {
       return {
         label: 'REPRICING BEARISH', color: '#f87171', icon: '📉',
-        desc: 'PE IV +' + peDev.toFixed(1) + '% vs B1 · CE IV ' + ceDev.toFixed(1) + '% vs B1 — put demand + call supply = downside positioning',
+        desc: 'PE IV +' + peDev.toFixed(1) + '% vs B1 · CE IV ' + ceDev.toFixed(1) + '% vs B1 — put demand + call supply',
         divergence: 'bearish', ceDev: ceDev, peDev: peDev,
       };
     }
-    // No divergence — overall read
     if (overallDev > 1.5)  return { label: 'EXPANDING',   color: '#4ade80', desc: 'IV above session baseline — buyer conditions present',    icon: '↑',  divergence: null, ceDev: ceDev, peDev: peDev };
     if (overallDev > 0.3)  return { label: 'RISING',      color: '#a3e635', desc: 'IV drifting above baseline — watch for confirmation',     icon: '↗',  divergence: null, ceDev: ceDev, peDev: peDev };
     if (overallDev < -1.5) return { label: 'COMPRESSING', color: '#f87171', desc: 'IV well below baseline — writer dominant, avoid buying',  icon: '↓',  divergence: null, ceDev: ceDev, peDev: peDev };
     if (overallDev < -0.3) return { label: 'FALLING',     color: '#f59e0b', desc: 'IV drifting below baseline — caution for buyers',         icon: '↘',  divergence: null, ceDev: ceDev, peDev: peDev };
-    return { label: 'NEUTRAL', color: '#64748b', desc: 'IV flat near baseline — no clear buyer or writer edge', icon: '→', divergence: null, ceDev: ceDev, peDev: peDev };
+    return { label: 'NEUTRAL', color: '#64748b', desc: 'IV flat near baseline — no clear edge for buyers', icon: '→', divergence: null, ceDev: ceDev, peDev: peDev };
   })();
 
-  // ── Confluence zones ──────────────────────────────────────────────────────
-  // Find consecutive adjacent strikes where driver is buyer-friendly on same side
+  // ── Confluence zones — buyer-strict (≥2 ENTER strikes) ────────────────────
+  // Removed PE UNWIND zones (ambiguous without spot context). Writer zones
+  // require WRITE specifically (not any non-buyer-friendly), and their bias
+  // is reported as informational floor/ceiling, not as a buyer entry signal.
   var confluenceZones = (function() {
+    if (warmingUp) return [];
+
     var zones = [];
-    // CE side — strikes above ATM, sorted ascending
     var ceStrikes = strikes.filter(function(r) { return r && r.strike > atm; })
                            .sort(function(a,b) { return a.strike - b.strike; });
-    // PE side — strikes below ATM, sorted descending (closest first)
     var peStrikes = strikes.filter(function(r) { return r && r.strike < atm; })
                            .sort(function(a,b) { return b.strike - a.strike; });
 
-    // Find buyer-friendly zones (BUY + COVER with IV above B1)
-    function findBuyerZones(rows, side) {
+    // ENTER zones — ≥2 adjacent strikes, must have IV above B1 (real demand)
+    function findEntryZones(rows, side) {
       var current = [];
       rows.forEach(function(row) {
         var drv   = driver(row, side);
         var b1iv  = getB1IV(row.strike, side);
         var curIV = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
-        // IV must be above B1 for buyer zone — confirms demand not just noise
-        if (drv.buyerFriendly && b1iv && curIV > b1iv) {
-          current.push({ row: row, drv: drv, type: 'buyer' });
+        if (drv.action === 'ENTER' && b1iv && curIV > b1iv) {
+          current.push({ row: row, drv: drv, type: 'enter' });
         } else {
-          if (current.length >= 1) zones.push({ side: side, rows: current.slice(), type: 'buyer' });
+          if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'enter' });
           current = [];
         }
       });
-      if (current.length >= 1) zones.push({ side: side, rows: current.slice(), type: 'buyer' });
+      if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'enter' });
     }
 
-    // Find writer zones (WRITE + UNWIND with IV below B1)
-    // These are important for buyers because:
-    //   CE WRITE zone = call writers capping upside = resistance = bearish
-    //   PE WRITE zone = put writers building support = bullish confirmation
-    //   CE UNWIND zone = call longs exiting = bearish momentum losing
-    //   PE UNWIND zone = put longs exiting = bullish (bears giving up)
-    function findWriterZones(rows, side) {
+    // WRITE zones — strict: only WRITE action, not AVOID/SKIP. ≥2 adjacent.
+    // These are informational (floor/ceiling), not buyer entries.
+    function findWriteZones(rows, side) {
       var current = [];
       rows.forEach(function(row) {
         var drv   = driver(row, side);
         var b1iv  = getB1IV(row.strike, side);
         var curIV = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
-        // IV must be below B1 for writer zone
-        if (!drv.buyerFriendly && drv.label !== '—' && b1iv && curIV < b1iv) {
-          current.push({ row: row, drv: drv, type: 'writer' });
+        if (drv.action === 'AVOID' && b1iv && curIV < b1iv) {  // AVOID = OI↑+IV↓ = writer building
+          current.push({ row: row, drv: drv, type: 'write' });
         } else {
-          if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'writer' });
+          if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'write' });
           current = [];
         }
       });
-      if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'writer' });
+      if (current.length >= 2) zones.push({ side: side, rows: current.slice(), type: 'write' });
     }
 
-    findBuyerZones(ceStrikes, 'ce');
-    findBuyerZones(peStrikes, 'pe');
-    findWriterZones(ceStrikes, 'ce');
-    findWriterZones(peStrikes, 'pe');
+    findEntryZones(ceStrikes, 'ce');
+    findEntryZones(peStrikes, 'pe');
+    findWriteZones(ceStrikes, 'ce');
+    findWriteZones(peStrikes, 'pe');
 
-    // Enrich each zone
+    // Enrich zones
     zones.forEach(function(z) {
       var oppSide = z.side === 'ce' ? 'pe' : 'ce';
       z.strikes   = z.rows.map(function(i){ return i.row.strike; });
 
-      if (z.type === 'buyer') {
-        var buyCount   = z.rows.filter(function(i){ return i.drv.label === 'BUY' || i.drv.label === 'IV↑'; }).length;
-        var coverCount = z.rows.filter(function(i){ return i.drv.label === 'COVER'; }).length;
-        z.driverLabel  = coverCount > buyCount ? 'SHORT COVERING' : 'BUYING';
-        z.bias         = z.side === 'ce' ? 'BULLISH' : 'BEARISH';
-        z.color        = z.side === 'ce' ? '#4ade80' : '#f87171';
-        // Opposite side confirmation: writer on opp side = confirms direction
+      if (z.type === 'enter') {
+        z.driverLabel = z.side === 'ce' ? 'CALL ENTRY' : 'PUT ENTRY';
+        z.bias        = z.side === 'ce' ? 'BULLISH' : 'BEARISH';
+        z.color       = z.side === 'ce' ? '#4ade80' : '#f87171';
+        // Confirmation: opposite side must show WRITE specifically (defended
+        // floor/ceiling) — was previously "any non-buyer-friendly" which let
+        // ambiguous SKIP/UNWIND drivers count as confirmation.
         var confirmCount = 0, contradictCount = 0;
         z.rows.forEach(function(item) {
           var oppDrv = driver(item.row, oppSide);
-          if (!oppDrv.buyerFriendly && oppDrv.label !== '—') confirmCount++;
-          if (oppDrv.buyerFriendly) contradictCount++;
+          if (oppDrv.action === 'AVOID') confirmCount++;       // opposite-side WRITE = confirms
+          if (oppDrv.action === 'ENTER') contradictCount++;    // opposite-side ENTER = contradicts
         });
         z.confirmed    = confirmCount >= Math.ceil(z.rows.length / 2);
         z.contradicted = contradictCount >= Math.ceil(z.rows.length / 2);
-        z.confirmNote  = z.confirmed ? '✓ opposite side confirms' : z.contradicted ? '⚠ opposite side contradicts' : '';
+        z.confirmNote  = z.confirmed ? '✓ opposite side WRITE confirms' : z.contradicted ? '⚠ opposite side ENTER contradicts' : '';
       } else {
-        // Writer zone — interpret for buyer
-        var dominantDriver = z.rows.filter(function(i){ return i.drv.label === 'WRITE'; }).length
-                           > z.rows.filter(function(i){ return i.drv.label === 'UNWIND'; }).length
-                           ? 'WRITE' : 'UNWIND';
+        // WRITE zone — informational floor/ceiling
         if (z.side === 'ce') {
-          // CE WRITE = call resistance building = bearish
-          // CE UNWIND = call longs leaving = bearish momentum
-          z.driverLabel = dominantDriver === 'WRITE' ? 'CALL WRITING' : 'CALL UNWINDING';
-          z.bias        = 'BEARISH';
-          z.color       = '#f87171';
-          z.confirmNote = 'resistance building — upside capped';
+          z.driverLabel = 'CALL WRITING';
+          z.bias        = 'CEILING';   // resistance, not directly bearish
+          z.color       = '#94a3b8';
+          z.confirmNote = 'resistance building above — informational';
         } else {
-          // PE WRITE = put support building = bullish
-          // PE UNWIND = put longs leaving = bulls exiting puts = bullish
-          z.driverLabel = dominantDriver === 'WRITE' ? 'PUT WRITING' : 'PUT UNWINDING';
-          z.bias        = 'BULLISH';
-          z.color       = '#4ade80';
-          z.confirmNote = dominantDriver === 'WRITE' ? 'support building — downside protected' : 'bears giving up — bullish';
+          z.driverLabel = 'PUT WRITING';
+          z.bias        = 'FLOOR';     // support, not directly bullish
+          z.color       = '#94a3b8';
+          z.confirmNote = 'support building below — informational';
         }
         z.confirmed    = false;
         z.contradicted = false;
       }
     });
 
-    // Sort: buyer zones first, then writer zones; within each group by zone size desc
+    // Sort: ENTER zones first, then WRITE zones; within each group by size desc
     zones.sort(function(a, b) {
-      if (a.type !== b.type) return a.type === 'buyer' ? -1 : 1;
+      if (a.type !== b.type) return a.type === 'enter' ? -1 : 1;
       return b.rows.length - a.rows.length;
     });
 
     return zones;
   })();
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, overflow: 'hidden' }}>
 
@@ -2624,7 +3329,7 @@ function OTMPositioning(props) {
             📡 OTM Positioning — Option Buyer View
           </p>
           <p style={{ fontSize: 10, color: '#475569', margin: 0 }}>
-            ATM ±5 · CE &amp; PE OI, COI, IV vs B1/B2, Driver · 3-min snapshots · BUY &amp; COVER highlighted
+            ATM ±5 · Entry Score, Action, Premium Δ · 3-min snapshots · ENTER signals only at confluence ≥2
           </p>
         </div>
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2632,6 +3337,14 @@ function OTMPositioning(props) {
           <div style={{ padding: '6px 12px', borderRadius: 8, background: ivEnv.color + '12', border: '1px solid ' + ivEnv.color + '33' }}>
             <p style={{ fontSize: 9, color: '#475569', margin: '0 0 2px', fontWeight: 700, textTransform: 'uppercase' }}>IV ENVIRONMENT</p>
             <span style={{ fontSize: 12, fontWeight: 800, color: ivEnv.color }}>{ivEnv.icon} {ivEnv.label}</span>
+          </div>
+          <div style={{ width: 1, height: 32, background: '#1e293b' }} />
+          {/* Theta drag */}
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: '#475569', margin: '0 0 1px', fontWeight: 700, textTransform: 'uppercase' }}>THETA</p>
+            <span style={{ fontSize: 11, fontWeight: 700, color: theta >= 0.95 ? '#4ade80' : theta >= 0.80 ? '#a3e635' : theta >= 0.65 ? '#f59e0b' : '#f87171' }}>
+              ×{theta.toFixed(2)}
+            </span>
           </div>
           <div style={{ width: 1, height: 32, background: '#1e293b' }} />
           {/* Skew */}
@@ -2663,7 +3376,6 @@ function OTMPositioning(props) {
             <p style={{ fontSize: 9, color: '#475569', margin: 0, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               OI Confluence Zones
             </p>
-            {/* Surface repricing banner if divergence detected */}
             {ivEnv.divergence && (
               <span style={{ fontSize: 11, fontWeight: 700, color: ivEnv.color,
                              padding: '2px 10px', borderRadius: 4,
@@ -2676,25 +3388,24 @@ function OTMPositioning(props) {
             )}
           </div>
           {confluenceZones.map(function(z, i) {
-            var isBuyer  = z.type === 'buyer';
-            var icon     = isBuyer
+            var isEnter  = z.type === 'enter';
+            var icon     = isEnter
               ? (z.side === 'ce' ? '📈' : '📉')
-              : (z.bias === 'BULLISH' ? '🛡' : '🚧');
+              : (z.bias === 'FLOOR' ? '🛡' : '🚧');
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px',
-                                    background: z.color + (isBuyer ? '0d' : '06'),
-                                    border: '1px solid ' + z.color + (isBuyer ? '44' : '22'),
-                                    borderLeft: '3px solid ' + z.color + (isBuyer ? '' : '88'),
+                                    background: z.color + (isEnter ? '0d' : '06'),
+                                    border: '1px solid ' + z.color + (isEnter ? '44' : '22'),
+                                    borderLeft: '3px solid ' + z.color + (isEnter ? '' : '88'),
                                     borderRadius: 6, flexWrap: 'wrap' }}>
-                {/* Type badge */}
-                <span style={{ fontSize: 9, fontWeight: 700, color: isBuyer ? z.color : '#64748b',
+                <span style={{ fontSize: 9, fontWeight: 700, color: isEnter ? z.color : '#64748b',
                                padding: '1px 6px', borderRadius: 3,
-                               background: isBuyer ? z.color + '20' : '#1e293b',
-                               border: '1px solid ' + (isBuyer ? z.color + '44' : '#334155'),
+                               background: isEnter ? z.color + '20' : '#1e293b',
+                               border: '1px solid ' + (isEnter ? z.color + '44' : '#334155'),
                                textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {isBuyer ? (z.side === 'ce' ? 'CALL' : 'PUT') : z.side.toUpperCase()}
+                  {isEnter ? (z.side === 'ce' ? 'CALL' : 'PUT') : z.side.toUpperCase()}
                 </span>
-                <span style={{ fontSize: 12, fontWeight: 800, color: isBuyer ? z.color : '#94a3b8' }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: isEnter ? z.color : '#94a3b8' }}>
                   {icon} {z.driverLabel}
                 </span>
                 <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
@@ -2704,10 +3415,10 @@ function OTMPositioning(props) {
                   {z.rows.length} strike{z.rows.length > 1 ? 's' : ''}
                 </span>
                 {z.confirmNote && (
-                  <span style={{ fontSize: 10, color: isBuyer ? z.color : '#64748b',
+                  <span style={{ fontSize: 10, color: isEnter ? z.color : '#64748b',
                                  padding: '1px 7px', borderRadius: 4,
-                                 background: isBuyer ? z.color + '15' : '#1e293b',
-                                 border: '1px solid ' + (isBuyer ? z.color + '33' : '#334155') }}>
+                                 background: isEnter ? z.color + '15' : '#1e293b',
+                                 border: '1px solid ' + (isEnter ? z.color + '33' : '#334155') }}>
                     {z.confirmNote}
                   </span>
                 )}
@@ -2717,27 +3428,37 @@ function OTMPositioning(props) {
         </div>
       )}
 
+      {/* ── Warming-up banner ── */}
+      {warmingUp && (
+        <div style={{ padding: '10px 20px', borderBottom: '1px solid #1e293b', background: 'rgba(100,116,139,0.06)' }}>
+          <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>
+            ⏳ WARMING UP — building 10:00–10:15 baseline ({b1Snaps.length}/3 snapshots collected). Drivers and Entry Scores will fire after 10:18 IST.
+          </span>
+        </div>
+      )}
+
       {/* ── Raw Data Table: CE | STRIKE | PE ── */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ background: '#0d1424' }}>
-              <th colSpan={5} style={{ padding: '7px 10px', color: '#f87171', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #f8717133' }}>
+              <th colSpan={6} style={{ padding: '7px 10px', color: '#f87171', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #f8717133' }}>
                 ◀ CALLS (CE)
               </th>
               <th style={{ padding: '7px 14px', color: '#60a5fa', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #60a5fa33', background: '#0a1020' }}>
                 STRIKE
               </th>
-              <th colSpan={5} style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #4ade8033' }}>
+              <th colSpan={6} style={{ padding: '7px 10px', color: '#4ade80', fontWeight: 700, textAlign: 'center', fontSize: 10, letterSpacing: '0.08em', borderBottom: '2px solid #4ade8033' }}>
                 PUTS (PE) ▶
               </th>
             </tr>
             <tr style={{ background: '#1a2332' }}>
               {/* CE headers — reading inward toward strike */}
-              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Driver</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Action</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Score</th>
               <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>IV · B1 · B2</th>
-              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>COI</th>
-              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Cum OI</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Premium · Δ</th>
+              <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>COI · Cum</th>
               <th style={{ padding: '6px 10px', color: '#f87171', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap', borderRight: '2px solid #1e293b' }}>OI</th>
               {/* Strike */}
               <th style={{ padding: '6px 14px', color: '#475569', fontWeight: 600, textAlign: 'center', fontSize: 9, background: '#0a1020' }}>
@@ -2745,10 +3466,11 @@ function OTMPositioning(props) {
               </th>
               {/* PE headers — reading outward from strike */}
               <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap', borderLeft: '2px solid #1e293b' }}>OI</th>
-              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Cum OI</th>
-              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>COI</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>COI · Cum</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Premium · Δ</th>
               <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>IV · B1 · B2</th>
-              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Driver</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'left',  fontSize: 9, whiteSpace: 'nowrap' }}>Score</th>
+              <th style={{ padding: '6px 10px', color: '#4ade80', fontWeight: 600, textAlign: 'right', fontSize: 9, whiteSpace: 'nowrap' }}>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -2757,7 +3479,6 @@ function OTMPositioning(props) {
               var isATM  = row.strike === atm || row.is_atm;
               var rowBg  = isATM ? 'rgba(96,165,250,0.06)' : 'transparent';
 
-              // ── compute all raw values ──
               function mkSide(side) {
                 var iv      = side === 'ce' ? (row.ce_iv || 0) : (row.pe_iv || 0);
                 var oi      = side === 'ce' ? (row.ce_oi || 0) : (row.pe_oi || 0);
@@ -2768,29 +3489,27 @@ function OTMPositioning(props) {
                 var b2Dev   = (b2iv && b2iv > 0) ? ((iv - b2iv) / b2iv) * 100 : null;
                 var openOI  = getOpenOI(row.strike, side);
                 var cumOI   = (openOI && openOI > 0) ? oi - openOI : null;
-                var drv     = isATM ? { label: '—', color: '#334155', buyerFriendly: false } : driver(row, side);
+                var drv     = isATM ? { action: '—', bias: 'neutral', tier: 'none', note: '' } : driver(row, side);
                 var ivD     = isATM ? '→' : ivDir(row.strike, side);
-                return { iv: iv, oi: oi, coi: coi, b1Dev: b1Dev, b2Dev: b2Dev, cumOI: cumOI, drv: drv, ivD: ivD };
+                var prem    = isATM ? { now: side === 'ce' ? (row.ce_ltp||0) : (row.pe_ltp||0), b1: null, abs: null, pct: null } : premiumEcon(row, side);
+                var score   = isATM ? 0 : computeEntryScore(row, side);
+                return { iv: iv, oi: oi, coi: coi, b1Dev: b1Dev, b2Dev: b2Dev, cumOI: cumOI, drv: drv, ivD: ivD, prem: prem, score: score };
               }
 
               var ce = mkSide('ce');
               var pe = mkSide('pe');
 
-              // Highlight row if either side is buyer-friendly with IV above B1
-              var ceActive = !isATM && ce.drv.buyerFriendly && ce.b1Dev !== null && ce.b1Dev > 0;
-              var peActive = !isATM && pe.drv.buyerFriendly && pe.b1Dev !== null && pe.b1Dev > 0;
-              var rowHighlight = ceActive ? 'rgba(74,222,128,0.04)' : peActive ? 'rgba(248,113,113,0.04)' : rowBg;
+              // Highlight row if either side has ENTER action
+              var ceActive = !isATM && ce.drv.action === 'ENTER';
+              var peActive = !isATM && pe.drv.action === 'ENTER';
+              var rowHighlight = ceActive ? 'rgba(74,222,128,0.05)' : peActive ? 'rgba(248,113,113,0.05)' : rowBg;
 
               // Color helpers
-              function coiColor(v, side) {
-                // For buyers: COI positive on CE = call demand, negative on PE = put demand being removed
+              function coiColor(v) {
                 if (v === 0) return '#334155';
-                if (side === 'ce') return v > 0 ? '#4ade80' : '#f87171';
                 return v > 0 ? '#4ade80' : '#f87171';
               }
-              function devColor(v, side) {
-                // Positive deviation (IV above baseline) = green for both
-                // Negative = red — IV falling is bad for buyers
+              function devColor(v) {
                 if (v === null) return '#334155';
                 if (v > 1.5) return '#4ade80';
                 if (v > 0)   return '#a3e635';
@@ -2826,24 +3545,49 @@ function OTMPositioning(props) {
                 return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
               }
               function ivFmt(v) { return v > 0 ? v.toFixed(1)+'%' : '—'; }
+              function premFmt(v) {
+                if (!v && v !== 0) return '—';
+                if (v >= 100) return '₹' + v.toFixed(0);
+                return '₹' + v.toFixed(1);
+              }
+              function premDeltaFmt(abs, pc) {
+                if (abs === null) return '—';
+                var s = abs > 0 ? '+' : '';
+                var aStr = Math.abs(abs) >= 100 ? abs.toFixed(0) : abs.toFixed(1);
+                return s + '₹' + aStr + ' (' + (pc > 0 ? '+' : '') + pc.toFixed(0) + '%)';
+              }
+              function premDeltaColor(abs) {
+                if (abs === null || abs === 0) return '#334155';
+                if (abs > 0) return '#4ade80';
+                return '#f87171';
+              }
+              function scoreColor(s) {
+                if (s >= 70) return '#4ade80';
+                if (s >= 40) return '#a3e635';
+                if (s >= 20) return '#f59e0b';
+                return '#475569';
+              }
+              function scoreFmt(s) {
+                if (s === 0) return '—';
+                return String(s);
+              }
 
-              // Driver cell — buyer-friendly drivers get color, others grey
-              function drvCell(drv, ivD, side) {
-                var label = drv.label;
+              // Action cell — buyer-action label with color tier
+              function actionCell(drv, ivD, side) {
+                if (drv.action === '—') {
+                  return <span style={{ color: '#334155', fontSize: 10 }}>— {ivD}</span>;
+                }
+                var col   = actionColor(drv.action, side);
                 var ivDColor = ivD === '↑↑' || ivD === '↑' ? '#4ade80' : ivD === '↓↓' || ivD === '↓' ? '#f87171' : '#475569';
-                if (label === '—') return (
-                  <span style={{ color: '#334155', fontSize: 10 }}>— {ivD}</span>
-                );
-                var col = drv.buyerFriendly
-                  ? (side === 'ce' ? '#4ade80' : '#f87171')
-                  : '#475569';
+                var bold  = drv.action === 'ENTER';
                 return (
                   <span>
-                    <span style={{ fontSize: 11, fontWeight: drv.buyerFriendly ? 800 : 400, color: col,
-                                   padding: drv.buyerFriendly ? '1px 5px' : '0',
-                                   background: drv.buyerFriendly ? col+'15' : 'transparent',
-                                   borderRadius: 3, border: drv.buyerFriendly ? '1px solid '+col+'44' : 'none' }}>
-                      {label}
+                    <span style={{ fontSize: 11, fontWeight: bold ? 800 : 600, color: col,
+                                   padding: bold ? '1px 5px' : '1px 4px',
+                                   background: bold ? col+'15' : 'transparent',
+                                   borderRadius: 3,
+                                   border: bold ? '1px solid '+col+'44' : '1px solid '+col+'22' }}>
+                      {drv.action}
                     </span>
                     <span style={{ fontSize: 10, color: ivDColor, marginLeft: 4 }}>{ivD}</span>
                   </span>
@@ -2852,33 +3596,46 @@ function OTMPositioning(props) {
 
               return (
                 <tr key={row.strike} style={{ background: rowHighlight, borderBottom: '1px solid #1e293b22',
-                                              borderLeft: ceActive ? '2px solid #4ade8033' : peActive ? '2px solid #f8717133' : '2px solid transparent' }}>
+                                              borderLeft: ceActive ? '2px solid #4ade8055' : peActive ? '2px solid #f8717155' : '2px solid transparent' }}>
 
-                  {/* ── CE side (Driver | IV·B1·B2 | COI | CumOI | OI) ── */}
+                  {/* ── CE side ── */}
                   <td style={{ padding: '8px 10px', textAlign: 'left', borderRight: '1px solid #1e293b22' }}>
-                    {isATM ? <span style={{ color: '#334155', fontSize: 10 }}>—</span> : drvCell(ce.drv, ce.ivD, 'ce')}
+                    {isATM ? <span style={{ color: '#334155', fontSize: 10 }}>—</span> : actionCell(ce.drv, ce.ivD, 'ce')}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', borderRight: '1px solid #1e293b22' }}>
+                    {isATM ? <span style={{ color: '#334155', fontSize: 11 }}>—</span> : (
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 800, color: scoreColor(ce.score) }}>
+                        {scoreFmt(ce.score)}
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'right', borderRight: '1px solid #1e293b22' }}>
                     {isATM ? <span style={{ color: '#334155', fontFamily: 'monospace', fontSize: 11 }}>—</span> : (
                       <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
                         <span style={{ color: '#94a3b8' }}>{ivFmt(ce.iv)}</span>
                         <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
-                        <span style={{ color: devColor(ce.b1Dev, 'ce'), fontWeight: ce.b1Dev !== null && Math.abs(ce.b1Dev) > 1 ? 700 : 400 }}>{devFmt(ce.b1Dev)}</span>
+                        <span style={{ color: devColor(ce.b1Dev), fontWeight: ce.b1Dev !== null && Math.abs(ce.b1Dev) > 1 ? 700 : 400 }}>{devFmt(ce.b1Dev)}</span>
                         <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
-                        <span style={{ color: devColor(ce.b2Dev, 'ce'), fontWeight: ce.b2Dev !== null && Math.abs(ce.b2Dev) > 1 ? 700 : 400 }}>{devFmt(ce.b2Dev)}</span>
+                        <span style={{ color: devColor(ce.b2Dev), fontWeight: ce.b2Dev !== null && Math.abs(ce.b2Dev) > 1 ? 700 : 400 }}>{devFmt(ce.b2Dev)}</span>
                       </span>
                     )}
                   </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontFamily: 'monospace', fontSize: 11,
-                               color: coiColor(ce.coi, 'ce'), fontWeight: Math.abs(ce.coi) > 1000 ? 700 : 400,
-                               borderRight: '1px solid #1e293b22' }}>
-                    {coiFmt(ce.coi)}
+                  <td style={{ padding: '8px 10px', textAlign: 'right', borderRight: '1px solid #1e293b22' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                      <span style={{ color: '#94a3b8' }}>{premFmt(ce.prem.now)}</span>
+                      <span style={{ color: '#1e293b', margin: '0 3px' }}>·</span>
+                      <span style={{ color: premDeltaColor(ce.prem.abs), fontWeight: ce.prem.abs !== null && Math.abs(ce.prem.abs) > 5 ? 700 : 400 }}>
+                        {premDeltaFmt(ce.prem.abs, ce.prem.pct)}
+                      </span>
+                    </span>
                   </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontFamily: 'monospace', fontSize: 11,
-                               color: ce.cumOI !== null ? (ce.cumOI > 0 ? '#4ade80' : ce.cumOI < 0 ? '#f87171' : '#475569') : '#334155',
-                               fontWeight: ce.cumOI !== null && Math.abs(ce.cumOI) > 5000 ? 700 : 400,
-                               borderRight: '1px solid #1e293b22' }}>
-                    {cumFmt(ce.cumOI)}
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #1e293b22' }}>
+                    <span style={{ color: coiColor(ce.coi), fontWeight: Math.abs(ce.coi) > OI_FRESH ? 700 : 400 }}>{coiFmt(ce.coi)}</span>
+                    <span style={{ color: '#1e293b', margin: '0 3px' }}>·</span>
+                    <span style={{ color: ce.cumOI !== null ? (ce.cumOI > 0 ? '#4ade80' : ce.cumOI < 0 ? '#f87171' : '#475569') : '#334155',
+                                   fontWeight: ce.cumOI !== null && Math.abs(ce.cumOI) > OI_STRONG ? 700 : 400 }}>
+                      {cumFmt(ce.cumOI)}
+                    </span>
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'right', color: '#f87171', fontWeight: 600,
                                fontSize: 11, borderRight: '2px solid #1e293b' }}>
@@ -2894,35 +3651,48 @@ function OTMPositioning(props) {
                     {isATM && <span style={{ display: 'block', fontSize: 8, color: '#60a5fa', fontWeight: 700, letterSpacing: '0.06em' }}>ATM</span>}
                   </td>
 
-                  {/* ── PE side (OI | CumOI | COI | IV·B1·B2 | Driver) ── */}
+                  {/* ── PE side ── */}
                   <td style={{ padding: '8px 10px', textAlign: 'left', color: '#4ade80', fontWeight: 600,
                                fontSize: 11, borderLeft: '2px solid #1e293b', borderRight: '1px solid #1e293b22' }}>
                     {oisize(pe.oi)}
                   </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'left', fontFamily: 'monospace', fontSize: 11,
-                               color: pe.cumOI !== null ? (pe.cumOI > 0 ? '#4ade80' : pe.cumOI < 0 ? '#f87171' : '#475569') : '#334155',
-                               fontWeight: pe.cumOI !== null && Math.abs(pe.cumOI) > 5000 ? 700 : 400,
-                               borderRight: '1px solid #1e293b22' }}>
-                    {cumFmt(pe.cumOI)}
+                  <td style={{ padding: '8px 10px', textAlign: 'left', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #1e293b22' }}>
+                    <span style={{ color: coiColor(pe.coi), fontWeight: Math.abs(pe.coi) > OI_FRESH ? 700 : 400 }}>{coiFmt(pe.coi)}</span>
+                    <span style={{ color: '#1e293b', margin: '0 3px' }}>·</span>
+                    <span style={{ color: pe.cumOI !== null ? (pe.cumOI > 0 ? '#4ade80' : pe.cumOI < 0 ? '#f87171' : '#475569') : '#334155',
+                                   fontWeight: pe.cumOI !== null && Math.abs(pe.cumOI) > OI_STRONG ? 700 : 400 }}>
+                      {cumFmt(pe.cumOI)}
+                    </span>
                   </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'left', fontFamily: 'monospace', fontSize: 11,
-                               color: coiColor(pe.coi, 'pe'), fontWeight: Math.abs(pe.coi) > 1000 ? 700 : 400,
-                               borderRight: '1px solid #1e293b22' }}>
-                    {coiFmt(pe.coi)}
+                  <td style={{ padding: '8px 10px', textAlign: 'left', borderRight: '1px solid #1e293b22' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                      <span style={{ color: '#94a3b8' }}>{premFmt(pe.prem.now)}</span>
+                      <span style={{ color: '#1e293b', margin: '0 3px' }}>·</span>
+                      <span style={{ color: premDeltaColor(pe.prem.abs), fontWeight: pe.prem.abs !== null && Math.abs(pe.prem.abs) > 5 ? 700 : 400 }}>
+                        {premDeltaFmt(pe.prem.abs, pe.prem.pct)}
+                      </span>
+                    </span>
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'left', borderRight: '1px solid #1e293b22' }}>
                     {isATM ? <span style={{ color: '#334155', fontFamily: 'monospace', fontSize: 11 }}>—</span> : (
                       <span style={{ fontFamily: 'monospace', fontSize: 11 }}>
                         <span style={{ color: '#94a3b8' }}>{ivFmt(pe.iv)}</span>
                         <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
-                        <span style={{ color: devColor(pe.b1Dev, 'pe'), fontWeight: pe.b1Dev !== null && Math.abs(pe.b1Dev) > 1 ? 700 : 400 }}>{devFmt(pe.b1Dev)}</span>
+                        <span style={{ color: devColor(pe.b1Dev), fontWeight: pe.b1Dev !== null && Math.abs(pe.b1Dev) > 1 ? 700 : 400 }}>{devFmt(pe.b1Dev)}</span>
                         <span style={{ color: '#1e293b', margin: '0 2px' }}>·</span>
-                        <span style={{ color: devColor(pe.b2Dev, 'pe'), fontWeight: pe.b2Dev !== null && Math.abs(pe.b2Dev) > 1 ? 700 : 400 }}>{devFmt(pe.b2Dev)}</span>
+                        <span style={{ color: devColor(pe.b2Dev), fontWeight: pe.b2Dev !== null && Math.abs(pe.b2Dev) > 1 ? 700 : 400 }}>{devFmt(pe.b2Dev)}</span>
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'left', borderRight: '1px solid #1e293b22' }}>
+                    {isATM ? <span style={{ color: '#334155', fontSize: 11 }}>—</span> : (
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 800, color: scoreColor(pe.score) }}>
+                        {scoreFmt(pe.score)}
                       </span>
                     )}
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                    {isATM ? <span style={{ color: '#334155', fontSize: 10 }}>—</span> : drvCell(pe.drv, pe.ivD, 'pe')}
+                    {isATM ? <span style={{ color: '#334155', fontSize: 10 }}>—</span> : actionCell(pe.drv, pe.ivD, 'pe')}
                   </td>
 
                 </tr>
@@ -2932,15 +3702,15 @@ function OTMPositioning(props) {
         </table>
       </div>
 
-      {/* ── Footer: how to read ── */}
-      <div style={{ padding: '10px 20px', borderTop: '1px solid #1e293b', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+      {/* ── Footer: action legend ── */}
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #1e293b', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         {[
-          { label: 'BUY',    color: '#4ade80', desc: 'OI↑ + IV↑  — buyer lifting ask, best entry' },
-          { label: 'COVER',  color: '#f59e0b', desc: 'OI↓ + IV↑  — writers forced to exit, strong momentum' },
-          { label: 'IV↑',    color: '#4ade8088', desc: 'IV above B1, OI flat — demand building, no fresh OI yet' },
-          { label: 'WRITE',  color: '#475569', desc: 'OI↑ + IV↓  — writer selling, avoid buying here' },
-          { label: 'UNWIND', color: '#334155', desc: 'OI↓ + IV↓  — longs exiting, no buyer interest' },
-          { label: 'IV↓',    color: '#64748b88', desc: 'IV below B1, OI flat — supply building, writers active' },
+          { label: 'ENTER', color: '#4ade80', desc: 'OI↑ + IV↑  — fresh buyers + premium expanding · primary entry' },
+          { label: 'WAIT',  color: '#f59e0b', desc: 'OI↓ + IV↑  — squeeze in progress · wait for OI rebuild' },
+          { label: 'AVOID', color: '#94a3b8', desc: 'OI↑ + IV↓  — writers active · premium contracting' },
+          { label: 'SKIP',  color: '#475569', desc: 'OI↓ + IV↓  — ambiguous · longs exiting OR profit-taking' },
+          { label: 'NOISE', color: '#334155', desc: 'OI flat + IV↑  — quote shading · not real demand' },
+          { label: 'DECAY', color: '#334155', desc: 'OI flat + IV↓  — normal theta · no signal' },
         ].map(function(d) {
           return (
             <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -2960,16 +3730,7 @@ function OTMPositioning(props) {
           Glossary — tap to expand
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 5 }}>
-          {[
-            { term: 'IV',        desc: 'Implied Volatility at this strike right now. Rising IV = premium being bid up = demand. Falling IV = premium being sold = supply.' },
-            { term: 'B1',        desc: 'IV deviation from the 10:00–10:15 settled baseline. Positive = IV above session start. Green = demand building vs whole day.' },
-            { term: 'B2',        desc: 'IV deviation from the rolling 45-min average. Positive = IV rising recently. Both B1 and B2 positive = sustained demand.' },
-            { term: 'COI',       desc: 'Change in Open Interest this snapshot. Fresh contracts entering. High positive COI with rising IV = genuine new buying.' },
-            { term: 'Cum OI',    desc: 'Total OI change from 9:15 open. Session-level picture — tells you how much position has built overall, not just this tick.' },
-            { term: 'OI',        desc: 'Total open interest at this strike. Large OI = institutionally significant level. Signals at high-OI strikes matter more.' },
-            { term: 'Driver',    desc: 'BUY: OI↑+IV↑ — buyer active. COVER: OI↓+IV↑ — writers exiting under pressure. WRITE: OI↑+IV↓ — writer active, avoid buying. UNWIND: OI↓+IV↓ — longs leaving.' },
-            { term: 'Confluence',desc: 'Multiple adjacent strikes showing the same buyer signal. 2+ strikes aligned = institutional zone, not single-strike noise. Confirmed = opposite side agrees.' },
-          ].map(function(item, i) {
+          {glossary.map(function(item, i) {
             var isOpen = openGloss === i;
             return (
               <div key={i} onClick={function() { setOpenGloss(isOpen ? null : i); }}
@@ -2990,8 +3751,6 @@ function OTMPositioning(props) {
     </div>
   );
 }
-
-// ─── End OTMPositioning ──────────────────────────────────────────────────────
 
 function TopStrikesSection(props) {
   var data = props.data || {};
@@ -4827,6 +5586,172 @@ export default function Options() {
   var dashIntervalRef             = useRef(null);
   var [dashData, setDashData]     = useState(null);
   var [strikeRange, setStrikeRange] = useState('full'); // 'full' | '1'..'15'
+  var [volumeData, setVolumeData]           = useState(null);
+  var [volumeHistory, setVolumeHistory]     = useState([]);   // (legacy) backend top_volume_strikes history
+  var [chainHistory, setChainHistory]       = useState([]);   // per-strike volume snapshots from data.full_chain (gap-free)
+  var [tvEvents, setTvEvents]               = useState([]);   // events streamed from TradingView via /api/tv/events
+  var [tvConfigured, setTvConfigured]       = useState(false);
+  var [tvLastErr, setTvLastErr]             = useState(null);
+  var tvLastSeenIdRef                        = useRef(0);
+  var [spikeThreshold, setSpikeThreshold]   = useState(1.5);
+  var alertedSpikesRef = useRef({});  // { 'NIFTY_24700_CE': true } — dedupe per session per symbol+strike+side
+  var [strikeIVHistory, setStrikeIVHistory] = useState([]);   // per-strike IV snapshots for ATM±5 picker
+
+  // ── Compute volume spikes from chainHistory (gap-free per-strike volume) ──
+  // Replaces the prior algorithm which relied on backend's top_volume_strikes
+  // — that list was N-strikes-wide and changed each snapshot, so a strike that
+  // just spiked into prominence had a baseline of mostly missing data and was
+  // silently skipped (the `prior.length < 3` guard).
+  //
+  // chainHistory has every strike, every snapshot, no gaps. We compute per-bar
+  // delta_volume = ce_vol[t] - ce_vol[t-1] (chain returns cumulative session
+  // volume), then test the latest delta against the prior N deltas.
+  var volumeSpikes = React.useMemo(function() {
+    if (!chainHistory || chainHistory.length < 6) return [];
+
+    // Skip first 20 minutes of session — open is structurally noisy and produces
+    // false spikes against an artificially low baseline.
+    var nowIst = new Date(Date.now() + 5.5 * 3600 * 1000);
+    var minsIST = nowIst.getUTCHours() * 60 + nowIst.getUTCMinutes();
+    var inOpenNoise = minsIST >= 555 && minsIST < 575;  // 9:15 to 9:35 IST
+    if (inOpenNoise) return [];
+
+    var current = chainHistory[chainHistory.length - 1];
+    var atm = current.atm || 0;
+
+    // Symbol-aware absolute floor: ignore spikes where current delta is too small
+    // to matter regardless of multiple. NIFTY ATM strikes typically do 5K-50K
+    // contracts per 3-min bar; BANKNIFTY ATM strikes smaller absolute numbers.
+    var symFromAtm = atm > 30000 ? 'BANKNIFTY' : 'NIFTY';
+    var ABS_FLOOR  = symFromAtm === 'BANKNIFTY' ? 200 : 500;
+    var MIN_AVG    = 30;   // floor on baseline avg; below this we're effectively dividing by ~0
+
+    // Walk all strikes present in current snapshot
+    var strikes = Object.keys(current.strikes || {});
+    var out = [];
+
+    strikes.forEach(function(strikeKey) {
+      var strike = parseInt(strikeKey, 10);
+
+      ['ce', 'pe'].forEach(function(side) {
+        var volKey = side + '_vol';
+
+        // Build the cumulative-volume time series for this strike+side from history
+        var cumSeries = chainHistory.map(function(snap) {
+          var s = snap.strikes && snap.strikes[strikeKey];
+          return s ? (s[volKey] || 0) : null;
+        });
+
+        // Derive per-bar delta series from cumulative
+        var deltaSeries = [];
+        for (var i = 1; i < cumSeries.length; i++) {
+          var a = cumSeries[i - 1], b = cumSeries[i];
+          if (a == null || b == null) { deltaSeries.push(null); continue; }
+          // Delta should be non-negative (cumulative). Negative = data anomaly
+          // (e.g. session reset, broker resync). Treat as null instead of using.
+          var d = b - a;
+          deltaSeries.push(d >= 0 ? d : null);
+        }
+
+        if (deltaSeries.length < 5) return;
+        var currentDelta = deltaSeries[deltaSeries.length - 1];
+        if (currentDelta == null || currentDelta < ABS_FLOOR) return;
+
+        // Baseline = mean of prior deltas (last 8, excluding current). Zero
+        // deltas are valid data — they mean "this strike was quiet" — and
+        // should drag the average down so a real spike registers.
+        var prior = deltaSeries.slice(-9, -1).filter(function(x) { return x != null; });
+        if (prior.length < 4) return;
+        var avgRaw = prior.reduce(function(a, b) { return a + b; }, 0) / prior.length;
+        var avg = Math.max(avgRaw, MIN_AVG);
+        var multiple = currentDelta / avg;
+        if (multiple < spikeThreshold) return;
+
+        // Compute aggression from current snapshot's chg_oi and ltp move
+        var sNow  = current.strikes[strikeKey];
+        var sPrev = chainHistory[chainHistory.length - 2].strikes[strikeKey];
+        var dOI   = sNow ? (side === 'ce' ? sNow.ce_chg_oi : sNow.pe_chg_oi) || 0 : 0;
+        var dLTP  = (sNow && sPrev)
+                  ? ((side === 'ce' ? sNow.ce_ltp : sNow.pe_ltp) - (side === 'ce' ? sPrev.ce_ltp : sPrev.pe_ltp))
+                  : 0;
+        var aggression = 'neutral';
+        if (dLTP > 0.5 && dOI > 0)  aggression = 'buyer';
+        if (dLTP < -0.5 && dOI > 0) aggression = 'writer';
+        if (dOI < 0)                aggression = 'unwind';
+
+        // Buildup classification (price × OI on this snapshot)
+        var buildup = 'neutral';
+        if (dOI > 0 && dLTP > 0.05) buildup = 'long_buildup';
+        else if (dOI > 0 && dLTP < -0.05) buildup = 'short_buildup';
+        else if (dOI < 0 && dLTP > 0.05) buildup = 'short_covering';
+        else if (dOI < 0 && dLTP < -0.05) buildup = 'long_unwinding';
+
+        // Smart-money score: weighted by multiple, ATM proximity, and
+        // OI-confirmed nature of the flow.
+        var step       = symFromAtm === 'BANKNIFTY' ? 100 : 50;
+        var atmDist    = Math.abs(strike - atm) / step;
+        var atmFactor  = atmDist <= 1 ? 1.0
+                       : atmDist <= 3 ? 0.85
+                       : atmDist <= 5 ? 0.65
+                       :                 0.40;
+        var aggrFactor = aggression === 'writer' ? 1.0    // writers usually pin = strong S/R signal
+                       : aggression === 'buyer'  ? 0.85
+                       : aggression === 'unwind' ? 0.55
+                       :                            0.45;
+        var multFactor = Math.min(multiple / 3, 1.5);     // diminishing returns above 3×
+        var smRaw      = 70 * atmFactor * aggrFactor * multFactor;
+        var smScore    = Math.min(100, Math.round(smRaw));
+
+        out.push({
+          strike: strike,
+          side: side.toUpperCase(),
+          time: current.time,
+          multiple: multiple,
+          delta_volume: currentDelta,
+          delta_oi: dOI,
+          buildup: buildup,
+          aggression: aggression,
+          sm_score: smScore,
+          is_atm: !!sNow.is_atm,
+        });
+      });
+    });
+
+    out.sort(function(a, b) { return b.sm_score - a.sm_score; });
+    return out;
+  }, [chainHistory, spikeThreshold]);
+
+  // ── Strike IV history: backend collects all 11 strikes every 3 min in
+  // refresh_options(). We just fetch + cache to localStorage so reload doesn't
+  // wipe the day's data and switching strikes shows immediate history.
+  function fetchStrikeIVHistory(sym) {
+    fetch('http://localhost:3001/api/strike-iv-history?symbol=' + sym)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.history) {
+          setStrikeIVHistory(d.history);
+          try {
+            var key = 'mt_strike_iv_' + sym + '_' + new Date().toISOString().slice(0, 10);
+            localStorage.setItem(key, JSON.stringify(d.history));
+          } catch (e) {}
+        }
+      })
+      .catch(function(e) { console.error('[Options] strike-iv fetch:', e); });
+  }
+
+  // Load cached history immediately on symbol change so the picker shows
+  // history even before the first backend fetch completes
+  useEffect(function() {
+    if (!symbol) return;
+    try {
+      var key = 'mt_strike_iv_' + symbol + '_' + new Date().toISOString().slice(0, 10);
+      var cached = localStorage.getItem(key);
+      if (cached) {
+        var parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) setStrikeIVHistory(parsed);
+      }
+    } catch (e) {}
+  }, [symbol]);
 
   useEffect(function() {
     try { localStorage.setItem(_alertKey, JSON.stringify(alerts.slice(0,200))); }
@@ -4834,6 +5759,132 @@ export default function Options() {
   }, [alerts]); // eslint-disable-line react-hooks/exhaustive-deps
   var overviewRef                 = useRef(null);
   var prevPCRRef                  = useRef({});
+
+  // ── TV webhook events polling ────────────────────────────────────────────
+  // Polls the local Flask /api/tv/events endpoint every 5 seconds for events
+  // pushed by the TradingView Pine Script via /api/tv/webhook. Uses
+  // since=<lastSeenId> for efficient incremental fetch — server returns only
+  // new events. Sets tvConfigured based on /api/tv/health to drive the panel
+  // empty-state UI.
+  useEffect(function() {
+    if (!hasOptions) return;
+    var aborted = false;
+
+    function checkHealth() {
+      fetch('http://localhost:3001/api/tv/health')
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (!aborted) setTvConfigured(!!(d && d.configured)); })
+        .catch(function() { if (!aborted) setTvConfigured(false); });
+    }
+
+    function pollEvents() {
+      var url = 'http://localhost:3001/api/tv/events?since=' + tvLastSeenIdRef.current + '&limit=50';
+      fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (aborted) return;
+          if (d && d.ok && Array.isArray(d.events)) {
+            if (d.events.length > 0) {
+              tvLastSeenIdRef.current = d.latest_id;
+              setTvEvents(function(prev) {
+                var next = prev.concat(d.events);
+                return next.slice(-100);   // cap last 100 events on the client
+              });
+            }
+            setTvLastErr(null);
+          }
+        })
+        .catch(function(e) {
+          if (!aborted) setTvLastErr(String(e));
+        });
+    }
+
+    checkHealth();
+    pollEvents();
+    var healthInt = setInterval(checkHealth, 30000);
+    var pollInt   = setInterval(pollEvents, 5000);
+
+    return function() {
+      aborted = true;
+      clearInterval(healthInt);
+      clearInterval(pollInt);
+    };
+  }, [hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Push new volume spikes into the existing AlertSystem ─────────────────
+  // Filters: SM score >= 60 (institutional-quality), ATM ±5 strikes only,
+  //          dedupe by symbol+strike+side per session.
+  // Alert shape matches existing OI alerts so AlertCard renders correctly.
+  useEffect(function() {
+    if (!volumeSpikes || volumeSpikes.length === 0) return;
+
+    var spotForRange = (volumeData && volumeData.spot) ||
+                       (data && data.spot_price) || 0;
+    var stepGuess = symbol === 'BANKNIFTY' ? 100 : 50;
+    var maxDist   = 5 * stepGuess;
+
+    var fired = [];
+    volumeSpikes.forEach(function(s) {
+      if (s.sm_score < 60) return;
+      if (spotForRange && Math.abs(s.strike - spotForRange) > maxDist) return;
+
+      var key = symbol + '_' + s.strike + '_' + s.side;
+      if (alertedSpikesRef.current[key]) return;
+      alertedSpikesRef.current[key] = true;
+
+      var isCE = s.side === 'CE';
+      var emoji = s.aggression === 'writer' ? '✍️' :
+                  s.aggression === 'buyer'  ? '🎯' :
+                  s.aggression === 'unwind' ? '↩️' : '⚡';
+
+      var aggrText = s.aggression === 'writer' ? 'writer aggression (sold to bid)' :
+                     s.aggression === 'buyer'  ? 'buyer aggression (lifted offer)' :
+                     s.aggression === 'unwind' ? 'position unwind (OI down)' :
+                     'two-sided flow';
+
+      var sideLabel = isCE ? 'CE' : 'PE';
+      var biasNote = '';
+      if (isCE && s.aggression === 'writer') biasNote = ' Resistance building at this level.';
+      else if (isCE && s.aggression === 'buyer')  biasNote = ' Directional call buying — upside expectation.';
+      else if (!isCE && s.aggression === 'writer') biasNote = ' Support building at this level.';
+      else if (!isCE && s.aggression === 'buyer')  biasNote = ' Directional put buying — downside expectation.';
+
+      var fmtVolForDesc = function(n) {
+        var a = Math.abs(n);
+        if (a >= 100000) return (n / 100000).toFixed(1) + 'L';
+        if (a >= 1000)   return (n / 1000).toFixed(0) + 'K';
+        return String(n);
+      };
+
+      fired.push({
+        id:       Date.now() + Math.random(),
+        ts:       Date.now(),
+        time:     s.time,
+        symbol:   symbol,
+        strike:   s.strike,
+        side:     isCE ? 'ce' : 'pe',
+        dir:      'spike',
+        type:     'VOL SPIKE — ' + s.strike + ' ' + sideLabel,
+        emoji:    emoji,
+        desc:     s.multiple.toFixed(1) + '× rolling avg volume on ' + sideLabel + ' at ' + s.strike +
+                  ' (+' + fmtVolForDesc(s.delta_volume) + ' contracts) — ' + aggrText + '.' + biasNote,
+        oi:       0,
+        delta:    '+' + fmtVolForDesc(s.delta_volume),
+        fromOpen: '',
+        pct:      Math.round(s.sm_score),
+        score:    Math.round(s.sm_score),
+        oiRank:   '',
+        tag:      s.is_atm ? 'ATM' : '',
+        level:    s.sm_score >= 75 ? 'HIGH-CONVICTION' : 'NEW',
+        samples:  chainHistory.length,
+      });
+    });
+
+    if (fired.length) {
+      console.log('[VolumeSpike] firing', fired.length, 'new alerts:', fired.map(function(a){return a.type;}).join(', '));
+      setAlerts(function(prev) { return fired.concat(prev).slice(0, 200); });
+    }
+  }, [volumeSpikes, symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
   var hasOptions = user && (
     user.plan === 'options' ||
@@ -4863,6 +5914,38 @@ export default function Options() {
             }
             return d;
           });
+          // Snapshot the chain into chainHistory for spike detection. Only
+          // append when this fetch is for the active symbol AND going into the
+          // main `data` state (setter === setData) — when active symbol is
+          // BANKNIFTY, both fetchSym calls have sym==='BANKNIFTY' but only one
+          // is for the main data; the other is for setBnData (overview-only).
+          if (sym === symbol && setter === setData) {
+            var chain = d.full_chain || d.chain || [];
+            if (chain.length) {
+              var nowIst = new Date(Date.now() + 5.5 * 3600 * 1000);
+              var hh = String(nowIst.getUTCHours()).padStart(2, '0');
+              var mm = String(nowIst.getUTCMinutes()).padStart(2, '0');
+              var snap = { time: hh + ':' + mm, atm: d.atm_strike || 0, strikes: {} };
+              chain.forEach(function(r) {
+                if (!r || !r.strike) return;
+                snap.strikes[String(r.strike)] = {
+                  ce_vol:    r.ce_vol    || 0,
+                  pe_vol:    r.pe_vol    || 0,
+                  ce_oi:     r.ce_oi     || 0,
+                  pe_oi:     r.pe_oi     || 0,
+                  ce_chg_oi: r.ce_chg_oi || 0,
+                  pe_chg_oi: r.pe_chg_oi || 0,
+                  ce_ltp:    r.ce_ltp    || 0,
+                  pe_ltp:    r.pe_ltp    || 0,
+                  is_atm:    !!r.is_atm,
+                };
+              });
+              setChainHistory(function(prev) {
+                var next = prev.concat([snap]);
+                return next.slice(-40);   // cap ~2hr
+              });
+            }
+          }
           setLoading(false);
           setLastUpdate(new Date().toLocaleTimeString());
         }
@@ -4875,6 +5958,21 @@ export default function Options() {
       .then(function(r) { return r.json(); })
       .then(function(d) { if (d && !d.error) setDashData(d); })
       .catch(function(e) { console.error('[Options] dashboard fetch:', e); });
+  }
+
+  function fetchVolumeAnalysis(sym) {
+    fetch('http://localhost:3001/api/volume/analysis?symbol=' + sym)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && !d.error) {
+          setVolumeData(d);
+          setVolumeHistory(function(prev) {
+            var next = prev.concat([d]);
+            return next.slice(-40);   // cap at ~2hr of session history
+          });
+        }
+      })
+      .catch(function(e) { console.error('[Options] volume fetch:', e); });
   }
 
   useEffect(function() {
@@ -4899,10 +5997,17 @@ export default function Options() {
     if (!hasOptions) return;
     setLoading(true);
     setData(null);
+    setVolumeData(null);
+    setVolumeHistory([]);   // reset (legacy) top-volume history when switching symbol
+    setChainHistory([]);    // reset chain-derived spike history when switching symbol
+    alertedSpikesRef.current = {};   // reset spike dedupe so alerts can re-fire on new symbol
+    setStrikeIVHistory([]);   // reset per-strike IV history on symbol switch
     prevPCRRef.current = {};
     fetchSym(symbol, setData);
     fetchSym('BANKNIFTY', setBnData);
     fetchDashboard(symbol);
+    fetchVolumeAnalysis(symbol);
+    fetchStrikeIVHistory(symbol);
     clearInterval(intervalRef.current);
     clearInterval(dashIntervalRef.current);
     intervalRef.current = setInterval(function() {
@@ -4914,6 +6019,8 @@ export default function Options() {
       fetchSym(symbol, setData);
       fetchSym('BANKNIFTY', setBnData);
       fetchDashboard(symbol);
+      fetchVolumeAnalysis(symbol);
+      fetchStrikeIVHistory(symbol);
     }, 180000);
     return function() {
       clearInterval(intervalRef.current);
@@ -5100,6 +6207,14 @@ export default function Options() {
             <UnwindAlerts alerts={data.unwind_alerts} />
           )}
 
+          <VolumeSpikeBanner spikes={volumeSpikes} />
+
+          <TVEventsPanel
+            events={tvEvents}
+            configured={tvConfigured}
+            lastErr={tvLastErr}
+          />
+
           {/* ── Strike Range Filter ── */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
                         padding: '10px 16px', background: '#0f172a',
@@ -5145,13 +6260,6 @@ export default function Options() {
 
           <OIBar data={filteredData || data} />
 
-          <PCRChart
-            candles={symbol === 'NIFTY' ? (overview['nifty_candles'] || []) : (overview['banknifty_candles'] || [])}
-            pcrHistory={data.pcr_intraday_3m || []}
-            dashHist={dashData ? (dashData.intraday_history || []) : []}
-            symbol={symbol}
-          />
-
           <ZoneSplit
             chain={data.chain || []}
             atm={data.atm_strike || 0}
@@ -5176,7 +6284,26 @@ export default function Options() {
             strikeHistory={data.strike_pcr_history || []}
           />
 
-          <IVDashboard history={data.iv_history || []} symbol={symbol} tDays={data.top_strikes ? data.top_strikes.T_days : null} />
+          <IVDashboard history={data.iv_history || []} symbol={symbol} tDays={data.top_strikes ? data.top_strikes.T_days : null} strikeIVHistory={strikeIVHistory} atm={data.atm_strike || 0} />
+
+          {/* ── Macro context for option buyers ── */}
+          <IVRegimeBadge
+            ivHistory={data.iv_history || []}
+            intradayHistory={dashData ? (dashData.intraday_history || []) : []}
+            symbol={symbol}
+          />
+
+          <SpotContext
+            intradayHistory={dashData ? (dashData.intraday_history || []) : []}
+            spot={data.spot_price || 0}
+            symbol={symbol}
+          />
+
+          <OptionFlowDecomp
+            strikeHistory={data.strike_pcr_history || []}
+            atm={data.atm_strike || 0}
+            symbol={symbol}
+          />
 
           <OTMPositioning
             chain={data.full_chain || data.chain || []}
@@ -5194,6 +6321,23 @@ export default function Options() {
           <VolumeLeaders
             ceVol={data.top_ce_vol || []}
             peVol={data.top_pe_vol || []}
+          />
+
+          <VolumeAnalysisPanel volume={volumeData} />
+
+          <VolumeSpikePanel
+            samples={chainHistory.length}
+            minSamples={6}
+            sessionPhase={(function() {
+              var ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+              var m = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+              if (m >= 555 && m < 575) return 'open-noise';
+              if (m < 555 || m >= 930) return 'closed';
+              return 'live';
+            })()}
+            spikes={volumeSpikes}
+            threshold={spikeThreshold}
+            setThreshold={setSpikeThreshold}
           />
 
 
