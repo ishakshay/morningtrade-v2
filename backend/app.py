@@ -25,6 +25,7 @@ from screeners.nse_futures import poll_futures_sentiment, update_latest, get_lat
 from screeners.nse_gamma import compute_gamma_blast
 from screeners.volume_analytics import compute as compute_volume_analytics
 from tv_webhook import register_tv_webhook
+from options_chain_grid_integration import init_grid_routes, store_grid_snapshot
 
 EOD_EXPORT_DIR = os.path.join(os.path.dirname(__file__), 'eod_exports')
 os.makedirs(EOD_EXPORT_DIR, exist_ok=True)
@@ -311,6 +312,7 @@ def refresh_news():
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
+init_grid_routes(app)
 register_tv_webhook(app)
 
 @app.route('/api/news')
@@ -395,7 +397,7 @@ def refresh_market_overview():
 
 def refresh_candles():
     """Refresh Nifty/BankNifty OHLC candles every 3 minutes during market hours."""
-    from screeners.nse_market import fetch_candles
+#     from screeners.nse_market import fetch_candles
     while True:
         try:
             nifty_c = fetch_candles('^NSEI')
@@ -502,6 +504,7 @@ def refresh_options():
                 result = fetch_options(symbol)
                 if result:
                     _options_cache[symbol] = result
+                    store_grid_snapshot(symbol, result)
                     print(f"  [options] {symbol} done — PCR: {result.get('pcr_total')}")
                     # Snapshot ATM±5 strike IVs into rolling history (used by frontend picker + EOD export)
                     try:
