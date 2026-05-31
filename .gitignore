@@ -1,9 +1,23 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.env
 venv/
-node_modules/
-build/
-.DS_Store
+.env
 *.log
+
+# EOD exports (generated files, don't need in git)
+backend/eod_exports/
+
+# Backup files
+*.bak
+backend/app_backup.py
+backend/app_ours.py
+
+# React build output
+frontend/build/
+frontend/node_modules/
+
+# OS files
+.DS_Store
+*.swp
