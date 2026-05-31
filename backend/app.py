@@ -628,6 +628,26 @@ def get_sector_scope():
 def get_sessions():
     return jsonify(sanitize(get_all_sessions()))
 
+
+@app.route('/api/snapshot')
+def get_snapshot():
+    """Single endpoint returning all cached data at once for fast initial load."""
+    from screeners.nse_futures import get_latest
+    return jsonify(sanitize({
+        'market':   _market_cache or {},
+        'options':  {
+            'NIFTY':     _options_cache.get('NIFTY', {}),
+            'BANKNIFTY': _options_cache.get('BANKNIFTY', {}),
+        },
+        'indices':  cache.get_indices() or [],
+        'news':     _news_items_cache.get('data', [])[:20],
+        'futures':  {
+            'NIFTY':     get_latest('NIFTY') or {},
+            'BANKNIFTY': get_latest('BANKNIFTY') or {},
+        },
+        'ts': int(time.time()),
+    }))
+
 @app.route('/api/market-overview')
 def get_market_overview_route():
     if not _market_cache:
