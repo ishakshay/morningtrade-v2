@@ -355,6 +355,9 @@ function AppLayout() {
           if (snap.news) {
             sessionStorage.setItem('fc_' + API + '/api/news', JSON.stringify({data: snap.news, ts: ts}));
           }
+          if (snap.tv_configured !== undefined) {
+            sessionStorage.setItem('mt_tv_configured', snap.tv_configured ? '1' : '0');
+          }
         } catch(e) {}
       })
       .catch(function() {});

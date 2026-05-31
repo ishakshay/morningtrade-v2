@@ -2012,37 +2012,36 @@ function TVEventsPanel(props) {
       {ordered.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 380, overflowY: 'auto' }}>
           {ordered.map(function(e) {
-            var sCol = sigColor(e.sig, e.side);
-            var sBg  = sCol === '#4ade80' ? 'rgba(74,222,128,0.08)'
-                     : sCol === '#f87171' ? 'rgba(248,113,113,0.08)'
-                     : 'rgba(148,163,184,0.05)';
             var biasC = biasColor(e.bias_verdict);
-            var interp = sigInterpretation(e.sig, e.side, e.buyer_read);
+            var tsStr = e.ts ? (typeof e.ts === 'string' ? e.ts.slice(11, 16) : new Date(e.ts).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'})) : '';
+            var strikes = (e.strikes && e.strikes.length > 0) ? e.strikes : [{strike: e.strike, side: e.side, sig: e.sig, z: e.z, ltp: e.ltp, delta_pct: e.delta_pct}];
             return (
-              <div key={e.id} style={{ display: 'grid', gridTemplateColumns: '70px 60px 80px 1fr 90px 70px',
-                                        gap: 10, alignItems: 'center', padding: '9px 12px',
-                                        background: sBg, borderRadius: 6, borderLeft: '3px solid ' + sCol }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: '#f1f5f9' }}>{e.strike}</div>
-                  <div style={{ fontSize: 9, color: '#64748b' }}>{e.tf}-min</div>
+              <div key={e.id} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #1e293b' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 10px', background: '#0f172a', borderBottom: '1px solid #1e293b' }}>
+                  <span style={{ fontSize: 10, color: '#475569' }}>{e.tf ? e.tf + '-min' : ''} · spot {e.spot} · bias <span style={{ color: biasC, fontWeight: 700 }}>{e.bias_verdict || '—'}</span>{e.bias_flip && <span style={{ color: '#f59e0b' }}> · 🔄 FLIP</span>}</span>
+                  <span style={{ fontSize: 10, color: '#475569' }}>{tsStr} · {fmtAgo(e.received_ms)}</span>
                 </div>
-                <div style={{ fontSize: 11, fontWeight: 800, color: sCol }}>{e.side}</div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: sCol }}>{e.sig || '—'}</div>
-                  <div style={{ fontSize: 9, color: '#64748b' }}>z={e.z != null ? Number(e.z).toFixed(1) : '—'}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{interp}</div>
-                  <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
-                    LTP ₹{e.ltp != null ? Number(e.ltp).toFixed(1) : '—'}
-                    {e.delta_pct != null && <span> · Δ{e.delta_pct > 0 ? '+' : ''}{Math.round(e.delta_pct)}%</span>}
-                    {' · spot '}{e.spot}
-                    {' · bias '}<span style={{ color: biasC, fontWeight: 700 }}>{e.bias_verdict}</span>
-                    {e.bias_flip && <span style={{ color: '#f59e0b', marginLeft: 4 }}> · 🔄 FLIP</span>}
-                  </div>
-                </div>
-                <div style={{ fontSize: 10, color: '#64748b' }}>{e.ts ? e.ts.slice(11, 16) : ''}</div>
-                <div style={{ fontSize: 10, color: '#475569', textAlign: 'right' }}>{fmtAgo(e.received_ms)}</div>
+                {strikes.map(function(s, si) {
+                  var sCol = sigColor(s.sig, s.side);
+                  var sBg  = sCol === '#4ade80' ? 'rgba(74,222,128,0.06)' : sCol === '#f87171' ? 'rgba(248,113,113,0.06)' : 'rgba(148,163,184,0.03)';
+                  var interp = sigInterpretation(s.sig, s.side, null);
+                  return (
+                    <div key={si} style={{ display: 'grid', gridTemplateColumns: '70px 50px 70px 1fr 80px', gap: 8, alignItems: 'center', padding: '7px 10px', background: sBg, borderLeft: '3px solid ' + sCol, borderBottom: si < strikes.length - 1 ? '1px solid #1e293b' : 'none' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#f1f5f9' }}>{s.strike}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: sCol }}>{s.side}</div>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: sCol }}>{s.sig || '—'}</div>
+                        <div style={{ fontSize: 9, color: '#64748b' }}>z={s.z != null ? Number(s.z).toFixed(1) : '—'}</div>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#cbd5e1' }}>
+                        {interp}
+                        {s.ltp != null && <span style={{ color: '#64748b' }}> · ₹{Number(s.ltp).toFixed(1)}</span>}
+                        {s.delta_pct != null && <span style={{ color: s.delta_pct > 0 ? '#4ade80' : '#f87171' }}> · Δ{s.delta_pct > 0 ? '+' : ''}{Math.round(s.delta_pct)}%</span>}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#64748b', textAlign: 'right' }}>vol {s.vol ? (s.vol >= 1000 ? Math.round(s.vol/1000) + 'K' : s.vol) : '—'}</div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -5771,9 +5770,12 @@ export default function Options() {
     var aborted = false;
 
     function checkHealth() {
+      var cached = sessionStorage.getItem('mt_tv_configured');
+      if (cached !== null) { if (!aborted) setTvConfigured(cached === '1'); }
       fetch('https://api.morningtrade.in/api/tv/health')
         .then(function(r) { return r.json(); })
         .then(function(d) { if (!aborted) setTvConfigured(!!(d && d.configured)); })
+        .catch(function() { if (!aborted && cached === null) setTvConfigured(false); })
         .catch(function() { if (!aborted) setTvConfigured(false); });
     }
 
