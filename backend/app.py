@@ -633,6 +633,8 @@ def get_sessions():
 def get_snapshot():
     """Single endpoint returning all cached data at once for fast initial load."""
     from screeners.nse_futures import get_latest
+    import os
+    tv_configured = bool(os.environ.get('TV_WEBHOOK_SECRET'))
     return jsonify(sanitize({
         'market':   _market_cache or {},
         'options':  {
@@ -645,6 +647,7 @@ def get_snapshot():
             'NIFTY':     get_latest('NIFTY') or {},
             'BANKNIFTY': get_latest('BANKNIFTY') or {},
         },
+        'tv_configured': tv_configured,
         'ts': int(time.time()),
     }))
 
