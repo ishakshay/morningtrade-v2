@@ -355,6 +355,9 @@ def get_market_overview():
 
     try:
         vix = fetch_vix()
+        if not vix:
+            from screeners.nse_market_jugaad import fetch_vix_jugaad
+            vix = fetch_vix_jugaad()
         if vix:
             save_vix_snapshot(vix['last'])
             vix['history'] = get_vix_history()
@@ -362,6 +365,15 @@ def get_market_overview():
             print(f"  [nse_market] VIX: {vix['last']}")
     except Exception as e:
         print(f"  [nse_market] VIX error: {e}")
+        try:
+            from screeners.nse_market_jugaad import fetch_vix_jugaad
+            vix = fetch_vix_jugaad()
+            if vix:
+                save_vix_snapshot(vix['last'])
+                vix['history'] = get_vix_history()
+                result['VIX'] = vix
+                print(f"  [nse_market] VIX (jugaad): {vix['last']}")
+        except: pass
 
     try:
         usdinr = fetch_usdinr()
@@ -373,11 +385,21 @@ def get_market_overview():
 
     try:
         breadth = fetch_nifty500_breadth()
+        if not breadth:
+            from screeners.nse_market_jugaad import fetch_breadth_jugaad
+            breadth = fetch_breadth_jugaad()
         if breadth:
             result['breadth'] = breadth
             print(f"  [nse_market] Breadth: A={breadth['advances']} D={breadth['declines']}")
     except Exception as e:
         print(f"  [nse_market] breadth error: {e}")
+        try:
+            from screeners.nse_market_jugaad import fetch_breadth_jugaad
+            breadth = fetch_breadth_jugaad()
+            if breadth:
+                result['breadth'] = breadth
+                print(f"  [nse_market] Breadth (jugaad): A={breadth['advances']} D={breadth['declines']}")
+        except: pass
 
     try:
         nifty_stocks = fetch_index_constituents('NIFTY 50', top_n=12)
