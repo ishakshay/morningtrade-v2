@@ -150,7 +150,7 @@ export default function SectorScope() {
 
   useEffect(function() {
     function connect() {
-      var ws = new WebSocket('ws://localhost:3001/ws');
+      var ws = new WebSocket('wss://api.morningtrade.in/ws');
       wsRef.current = ws;
       ws.onopen = function() { setConnected(true); };
       ws.onmessage = function(e) {
@@ -173,7 +173,25 @@ export default function SectorScope() {
 
   useEffect(function() {
     if (!country) return;
-    fetch('http://localhost:3001/api/sector-scope?country=' + country)
+    var cacheKey = 'mt_sector_' + country;
+    try {
+      var ts = parseInt(sessionStorage.getItem(cacheKey + '_ts') || '0');
+      if (Date.now() - ts < 60000) {
+        var cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          var data = JSON.parse(cached);
+          setAllData(function(prev) {
+            var next = Object.assign({}, prev);
+            if (!next[country]) next[country] = {};
+            next[country].sector_scope = data;
+            return next;
+          });
+          setLastUpdated(new Date().toLocaleTimeString());
+          return;
+        }
+      }
+    } catch(e) {}
+    fetch('https://api.morningtrade.in/api/sector-scope?country=' + country)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data && Object.keys(data).length > 0) {
@@ -184,6 +202,10 @@ export default function SectorScope() {
             return next;
           });
           setLastUpdated(new Date().toLocaleTimeString());
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify(data));
+            sessionStorage.setItem(cacheKey + '_ts', Date.now().toString());
+          } catch(e) {}
         }
       })
       .catch(function(e) { console.error(e); });

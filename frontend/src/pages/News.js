@@ -86,7 +86,7 @@ export default function News() {
 
   function fetchNews() {
     setLoading(true);
-    fetch('http://localhost:3001/api/news?region=' + region)
+    fetch('https://api.morningtrade.in/api/news?region=' + region)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var items = Array.isArray(d) ? d : [];

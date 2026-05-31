@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import DataDisclaimer, { LegalDisclaimer } from '../components/DataDisclaimer';
 import PageTitle from '../components/PageTitle';
 
@@ -66,17 +66,30 @@ export default function Stocks() {
   var [country, setCountry]         = useState('PL');
 
   useEffect(function() {
-    setLoading(true);
-    setStocks([]);
+    var cacheKey = 'mt_stocks_' + country;
+    try {
+      var ts = parseInt(sessionStorage.getItem(cacheKey + '_ts') || '0');
+      if (Date.now() - ts < 60000) {
+        var cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          setStocks(JSON.parse(cached));
+          setLoading(false);
+        }
+      }
+    } catch(e) {}
 
     function loadStocks() {
-      fetch('http://localhost:3001/api/stocks?country=' + country)
+      fetch('https://api.morningtrade.in/api/stocks?country=' + country)
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (Array.isArray(data)) {
             setStocks(data);
             setLastUpdated(new Date().toLocaleTimeString());
             setLoading(false);
+            try {
+              sessionStorage.setItem(cacheKey, JSON.stringify(data));
+              sessionStorage.setItem(cacheKey + '_ts', Date.now().toString());
+            } catch(e) {}
           }
         })
         .catch(function(e) {

@@ -1,0 +1,215 @@
+"""
+nse_sector_indices.py  —  place in project root alongside app.py
+
+Uses yfinance (already installed) to fetch 5-min OHLC for NSE sector indices.
+- On startup: loads last 5 trading days of 5-min history immediately
+- During market hours: refreshes every 3 min via start_sector_polling()
+- Works outside market hours — always shows last 5 days of candles
+
+Blueprint:  sector_indices_bp  →  GET /api/sector-indices
+Function:   start_sector_polling(interval_seconds=180)
+"""
+
+import math
+import time
+import threading
+import datetime
+import pytz
+
+import yfinance as yf
+from flask import Blueprint, jsonify
+
+# ── Yahoo Finance symbols for each sector index ───────────────────────────────
+SECTORS = {
+    'BANKNIFTY': '^NSEBANK',
+    'CNXIT':     '^CNXIT',
+    'OILGAS':    'NIFTY_OIL_AND_GAS.NS',
+    'AUTO':      '^CNXAUTO',
+    'PHARMA':    '^CNXPHARMA',
+    'METAL':     '^CNXMETAL',
+}
+
+IST = pytz.timezone('Asia/Kolkata')
+
+# ── In-memory store ───────────────────────────────────────────────────────────
+_candle_store = {k: [] for k in SECTORS}   # [{time,date,open,high,low,close,volume}]
+_last_quote   = {k: {} for k in SECTORS}   # {last,pct_change,is_up,...}
+_store_lock   = threading.Lock()
+
+sector_indices_bp = Blueprint('sector_indices', __name__)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _sanitize(obj):
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return 0
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(i) for i in obj]
+    return obj
+
+def _ist_now():
+    return datetime.datetime.now(IST)
+
+def _market_open():
+    now  = _ist_now()
+    if now.weekday() >= 5:
+        return False
+    mins = now.hour * 60 + now.minute
+    return 9 * 60 + 15 <= mins < 15 * 60 + 30
+
+# ── Fetch 5-min history via yfinance ─────────────────────────────────────────
+def _fetch_history(sector_key):
+    """
+    Fetch last 5 days of 5-min OHLCV candles for one sector index.
+    yfinance returns data in UTC; we convert to IST and filter to market hours.
+    Returns list of candle dicts with time, date, open, high, low, close, volume.
+    """
+    yf_sym = SECTORS[sector_key]
+    try:
+        ticker = yf.Ticker(yf_sym)
+        # period='5d' gives ~5 trading days of 5-min bars
+        df = ticker.history(period='5d', interval='5m', auto_adjust=True)
+        if df is None or df.empty:
+            print(f'  [sector_indices] no data from yfinance for {sector_key} ({yf_sym})')
+            return []
+
+        candles = []
+        for ts, row in df.iterrows():
+            # Convert timestamp to IST
+            if hasattr(ts, 'tz_convert'):
+                ist_ts = ts.tz_convert(IST)
+            else:
+                ist_ts = ts.replace(tzinfo=pytz.utc).astimezone(IST)
+
+            # Filter to NSE market hours 9:15–15:30 IST, Mon–Fri
+            if ist_ts.weekday() >= 5:
+                continue
+            mins = ist_ts.hour * 60 + ist_ts.minute
+            if mins < 9 * 60 + 15 or mins > 15 * 60 + 25:
+                continue
+
+            candles.append({
+                'time':   '{:02d}:{:02d}'.format(ist_ts.hour, ist_ts.minute),
+                'date':   ist_ts.strftime('%Y-%m-%d'),
+                'open':   round(float(row['Open']),  2),
+                'high':   round(float(row['High']),  2),
+                'low':    round(float(row['Low']),   2),
+                'close':  round(float(row['Close']), 2),
+                'volume': int(row['Volume']) if row['Volume'] == row['Volume'] else 0,
+            })
+
+        print(f'  [sector_indices] {sector_key}: {len(candles)} candles loaded')
+        return candles
+
+    except Exception as e:
+        print(f'  [sector_indices] yfinance error {sector_key} ({yf_sym}): {e}')
+        return []
+
+# ── Derive last quote from candles ────────────────────────────────────────────
+def _quote_from_candles(candles):
+    """Build a last-quote dict from the most recent candle."""
+    if not candles:
+        return {}
+    last_c = candles[-1]
+    # Find today's first candle for prev_close reference
+    today = _ist_now().strftime('%Y-%m-%d')
+    today_candles  = [c for c in candles if c['date'] == today]
+    prev_candles   = [c for c in candles if c['date'] < today]
+    if today_candles:
+        open_price  = today_candles[0]['open']
+        prev_close  = prev_candles[-1]['close'] if prev_candles else open_price
+    else:
+        # Market closed — use last candle's close vs its open as reference
+        prev_close = candles[-2]['close'] if len(candles) >= 2 else last_c['close']
+        open_price = prev_close
+    last  = last_c['close']
+    chg   = last - prev_close
+    pct   = round(chg / prev_close * 100, 2) if prev_close else 0.0
+    return {
+        'last':       last,
+        'open':       open_price,
+        'prev_close': prev_close,
+        'change':     round(chg, 2),
+        'pct_change': pct,
+        'is_up':      chg >= 0,
+    }
+
+# ── Full refresh — fetch history + update store ───────────────────────────────
+def _refresh_sector(sector_key):
+    """Fetch fresh 5-day history and update store for one sector."""
+    candles = _fetch_history(sector_key)
+    if candles:
+        quote = _quote_from_candles(candles)
+        with _store_lock:
+            _candle_store[sector_key] = candles[-500:]
+            _last_quote[sector_key]   = quote
+
+def refresh_all_sectors():
+    """Refresh all 6 sector indices."""
+    for key in SECTORS:
+        try:
+            _refresh_sector(key)
+        except Exception as e:
+            print(f'  [sector_indices] refresh error {key}: {e}')
+
+# ── API endpoint ──────────────────────────────────────────────────────────────
+@sector_indices_bp.route('/api/sector-indices')
+def api_sector_indices():
+    """
+    Response shape consumed by Options.js LWCSectorChart:
+    {
+      "BANKNIFTY": {
+        "last": 51240.5, "pct_change": 0.42, "is_up": true,
+        "candles": [
+          {"time":"09:15","date":"2026-05-16","open":..,"high":..,"low":..,"close":..,"volume":..},
+          ...  (5 days of 5-min candles, ~375 bars)
+        ]
+      }, ...
+    }
+    """
+    result = {}
+    with _store_lock:
+        for key in SECTORS:
+            q = dict(_last_quote[key]) if _last_quote[key] else {}
+            q['candles'] = list(_candle_store[key])
+            result[key]  = q
+    return jsonify(_sanitize(result))
+
+# ── Background polling thread ─────────────────────────────────────────────────
+_bg_thread = None
+
+def start_sector_polling(interval_seconds=180):
+    """
+    Call from app.py after app = Flask(...).
+    Loads full 5-day history on startup (instant, works outside market hours),
+    then refreshes every interval_seconds during market hours.
+    """
+    global _bg_thread
+    if _bg_thread and _bg_thread.is_alive():
+        return
+
+    def _loop():
+        # Initial load — runs immediately, gives data even before market opens
+        print('\n[sector_indices] loading 5-day history via yfinance...')
+        try:
+            refresh_all_sectors()
+            print('[sector_indices] initial load complete\n')
+        except Exception as e:
+            print(f'[sector_indices] initial load error: {e}')
+
+        while True:
+            time.sleep(interval_seconds)
+            try:
+                refresh_all_sectors()
+                print(f'  [sector_indices] refreshed {len(SECTORS)} sectors')
+            except Exception as e:
+                print(f'  [sector_indices] poll error: {e}')
+
+    _bg_thread = threading.Thread(
+        target=_loop, daemon=True, name='sector-indices-poll'
+    )
+    _bg_thread.start()
+    print(f'[sector_indices] polling started ({interval_seconds}s interval)')

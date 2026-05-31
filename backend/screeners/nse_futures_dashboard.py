@@ -132,48 +132,33 @@ def get_intraday_history(symbol):
     return list(reversed(_intraday_history[symbol]['snapshots']))
 
 def fetch_futures_data(symbol):
-    nse = get_nse()
     try:
+        # Use allIndices — works with current NSE API (live_index endpoint is 404)
+        from screeners.nse_market import get_nse_session
+        s = get_nse_session()
+        r = s.get('https://www.nseindia.com/api/allIndices', timeout=8)
+        if r.status_code != 200:
+            return None
+        all_data   = r.json()
         index_name = 'NIFTY 50' if symbol == 'NIFTY' else 'NIFTY BANK'
-        spot_data  = nse.live_index(index_name)
-        spot_meta  = spot_data.get('metadata', {})
-        spot_price = safe_float(spot_meta.get('last', 0))
+        index_item = next((x for x in all_data.get('data', [])
+                           if x.get('indexSymbol') == index_name
+                           or x.get('index') == index_name), None)
+        if not index_item:
+            return None
 
-        fut_ltp  = spot_price
-        fut_high = safe_float(spot_meta.get('high', spot_price))
-        fut_low  = safe_float(spot_meta.get('low', spot_price))
-        fut_open = safe_float(spot_meta.get('open', spot_price))
-        fut_vol  = 0
-        fut_vwap = 0
-        fut_chg  = safe_float(spot_meta.get('change', 0))
-        fut_pct  = safe_float(spot_meta.get('percChange', 0))
-
-        try:
-            fno_data  = nse.stock_quote_fno(symbol)
-            contracts = fno_data.get('data', [])
-            fut_contract = None
-            for c in contracts:
-                if c.get('instrumentType') == 'FUTIDX':
-                    fut_contract = c
-                    break
-            if fut_contract:
-                fut_ltp  = safe_float(fut_contract.get('lastPrice',  fut_ltp))
-                fut_high = safe_float(fut_contract.get('highPrice',  fut_high))
-                fut_low  = safe_float(fut_contract.get('lowPrice',   fut_low))
-                fut_open = safe_float(fut_contract.get('openPrice',  fut_open))
-                fut_vol  = safe_int(fut_contract.get('totalTradedVolume', 0))
-                turnover = safe_float(fut_contract.get('totalTurnover', 0))
-                fut_chg  = safe_float(fut_contract.get('change',  fut_chg))
-                fut_pct  = safe_float(fut_contract.get('pchange', fut_pct))
-                lot_size = 65 if symbol == 'NIFTY' else 30
-                if fut_vol > 0 and turnover > 0:
-                    fut_vwap = round(turnover / (fut_vol * lot_size), 2)
-        except Exception as e:
-            print(f"  [futures_dashboard] stock_quote_fno failed for {symbol}: {e}")
+        spot_price = safe_float(index_item.get('last', 0))
+        fut_ltp    = spot_price
+        fut_high   = safe_float(index_item.get('high',         spot_price))
+        fut_low    = safe_float(index_item.get('low',          spot_price))
+        fut_open   = safe_float(index_item.get('open',         spot_price))
+        fut_vol    = safe_int(index_item.get('totalTradedVolume', 0))
+        fut_chg    = safe_float(index_item.get('variation',    0))
+        fut_pct    = safe_float(index_item.get('percentChange',0))
+        fut_vwap   = 0
 
         if fut_vwap == 0:
-            fut_vwap = update_vwap(symbol, fut_ltp,
-                                   safe_int(spot_meta.get('totalTradedVolume', 0)))
+            fut_vwap = update_vwap(symbol, fut_ltp, fut_vol)
 
         fut_vs_vwap = round(fut_ltp - fut_vwap, 2)
 

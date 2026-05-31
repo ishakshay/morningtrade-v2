@@ -3945,7 +3945,7 @@ function PreTradeModal(props) {
   var [news, setNews]     = React.useState([]);
 
   React.useEffect(function() {
-    fetch('http://localhost:3001/api/news')
+    fetch('https://api.morningtrade.in/api/news')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!Array.isArray(d)) return;
@@ -5725,7 +5725,7 @@ export default function Options() {
   // refresh_options(). We just fetch + cache to localStorage so reload doesn't
   // wipe the day's data and switching strikes shows immediate history.
   function fetchStrikeIVHistory(sym) {
-    fetch('http://localhost:3001/api/strike-iv-history?symbol=' + sym)
+    fetch('https://api.morningtrade.in/api/strike-iv-history?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && d.history) {
@@ -5771,14 +5771,14 @@ export default function Options() {
     var aborted = false;
 
     function checkHealth() {
-      fetch('http://localhost:3001/api/tv/health')
+      fetch('https://api.morningtrade.in/api/tv/health')
         .then(function(r) { return r.json(); })
         .then(function(d) { if (!aborted) setTvConfigured(!!(d && d.configured)); })
         .catch(function() { if (!aborted) setTvConfigured(false); });
     }
 
     function pollEvents() {
-      var url = 'http://localhost:3001/api/tv/events?since=' + tvLastSeenIdRef.current + '&limit=50';
+      var url = 'https://api.morningtrade.in/api/tv/events?since=' + tvLastSeenIdRef.current + '&limit=50';
       fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -5893,14 +5893,14 @@ export default function Options() {
   );
 
   function fetchOverview() {
-    fetch('http://localhost:3001/api/market-overview')
+    fetch('https://api.morningtrade.in/api/market-overview')
       .then(function(r) { return r.json(); })
       .then(function(d) { if (d && !d.error) setOverview(d); })
       .catch(function() {});
   }
 
   function fetchSym(sym, setter) {
-    fetch('http://localhost:3001/api/options?symbol=' + sym)
+    fetch('https://api.morningtrade.in/api/options?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && d.spot_price) {
@@ -5954,14 +5954,14 @@ export default function Options() {
   }
 
   function fetchDashboard(sym) {
-    fetch('http://localhost:3001/api/futures-dashboard?symbol=' + sym)
+    fetch('https://api.morningtrade.in/api/futures-dashboard?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) { if (d && !d.error) setDashData(d); })
       .catch(function(e) { console.error('[Options] dashboard fetch:', e); });
   }
 
   function fetchVolumeAnalysis(sym) {
-    fetch('http://localhost:3001/api/volume/analysis?symbol=' + sym)
+    fetch('https://api.morningtrade.in/api/volume/analysis?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && !d.error) {

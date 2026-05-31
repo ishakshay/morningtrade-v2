@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import Stocks from './pages/Stocks';
@@ -15,6 +15,7 @@ import IndicesTicker from './components/IndicesTicker';
 import News from './pages/News';
 import FuturesPage from './pages/FuturesPage';
 import ScannerPage from './pages/ScannerPage';
+import OptionsChainGrid from './pages/OptionsChainGrid';
 
 
 function FooterDisclaimer() {
@@ -78,6 +79,7 @@ function Sidebar({ collapsed, setCollapsed }) {
       links: [
         { to: '/options',      label: 'Options Analysis' },
         { to: '/option-chain', label: 'Option Chain'     },
+        { to: '/chain-grid',   label: 'Chain Grid'       },
         { to: '/futures',      label: 'Futures'          },
       ],
     },
@@ -292,6 +294,42 @@ function Sidebar({ collapsed, setCollapsed }) {
   );
 }
 
+
+function KeepAliveRoutes() {
+  var location = useLocation();
+  var path = location.pathname;
+
+  var pages = [
+    { route: '/',               component: <Stocks />          },
+    { route: '/screener',       component: <Screener />        },
+    { route: '/sector-scope',   component: <SectorScope />     },
+    { route: '/market-session', component: <MarketSession />   },
+    { route: '/journal',        component: <Journal />         },
+    { route: '/pricing',        component: <Pricing />         },
+    { route: '/options',        component: <Options />         },
+    { route: '/option-chain',   component: <OptionChain />     },
+    { route: '/futures',        component: <FuturesPage />     },
+    { route: '/news',           component: <News />            },
+    { route: '/scanner',        component: <ScannerPage />     },
+    { route: '/chain-grid',     component: <OptionsChainGrid />},
+  ];
+
+  return (
+    <div style={{ width: '100%' }}>
+      {pages.map(function(p) {
+        var isActive = p.route === '/'
+          ? path === '/'
+          : path.startsWith(p.route);
+        return (
+          <div key={p.route} style={{ display: isActive ? 'block' : 'none' }}>
+            {p.component}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AppLayout() {
   var [collapsed, setCollapsed] = useState(false);
 
@@ -314,6 +352,7 @@ function AppLayout() {
               <Route path="/futures"        element={<FuturesPage />}  />
               <Route path="/news"           element={<News />}         />
               <Route path="/scanner"        element={<ScannerPage />}  />
+              <Route path="/chain-grid"     element={<OptionsChainGrid />} />
             </Routes>
           </div>
           <FooterDisclaimer />

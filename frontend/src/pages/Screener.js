@@ -398,7 +398,7 @@ export default function Screener() {
 
   useEffect(function() {
     function connect() {
-      var ws = new WebSocket('ws://localhost:3001/ws');
+      var ws = new WebSocket('wss://api.morningtrade.in/ws');
       wsRef.current = ws;
       ws.onopen = function() { setConnected(true); };
       ws.onmessage = function(e) {

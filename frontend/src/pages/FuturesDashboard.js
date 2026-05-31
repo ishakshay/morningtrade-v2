@@ -3,7 +3,7 @@ import PageTitle from '../components/PageTitle';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-var API = 'http://localhost:3001';
+var API = 'https://api.morningtrade.in';
 
 var SYMBOLS = [
   { code: 'NIFTY',     label: 'NIFTY 50',  flag: '📊' },

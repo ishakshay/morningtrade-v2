@@ -1,10 +1,13 @@
-from jugaad_data.nse import NSELive
-from datetime import datetime
-import math
+# Replace the TOP of nse_futures.py (lines 1-53) with this.
+# Everything from line 54 onwards (poll_futures_sentiment logic) stays identical.
 
-_nse     = None
-_latest  = {}
-_history = {}
+import requests
+import math
+from datetime import datetime
+
+_session  = None
+_latest   = {}
+_history  = {}
 
 SIGNAL_META = {
     'Long Buildup':   {'emoji': '🟢', 'color': '#4ade80'},
@@ -24,11 +27,27 @@ OPTIONS_IMPLICATION = {
     'Neutral':        {'action': 'No clear edge — stay light',                  'avoid': None},
 }
 
-def get_nse():
-    global _nse
-    if _nse is None:
-        _nse = NSELive()
-    return _nse
+def _get_session():
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        _session.headers.update({
+            'User-Agent':      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                               'AppleWebKit/537.36 (KHTML, like Gecko) '
+                               'Chrome/120.0.0.0 Safari/537.36',
+            'Accept':          'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer':         'https://www.nseindia.com/',
+        })
+        try:
+            _session.get('https://www.nseindia.com', timeout=10)
+        except Exception:
+            pass
+    return _session
+
+def _reset_session():
+    global _session
+    _session = None
 
 def safe_float(val, default=0):
     try:
@@ -51,57 +70,80 @@ def update_latest(symbol, payload):
 def get_latest(symbol):
     return _latest.get(symbol)
 
+def _fetch_futures_data(symbol):
+    """
+    Fetch spot price and near-month futures data from NSE.
+    Uses equity_stockIndices for spot and quote for futures.
+    Returns (spot_price, fut_ltp, fut_oi, fut_vol, fut_chg, fut_pct)
+    """
+    index_name = 'NIFTY 50' if symbol == 'NIFTY' else 'NIFTY BANK'
+    fut_symbol = 'NIFTY' if symbol == 'NIFTY' else 'BANKNIFTY'
+
+    s = _get_session()
+
+    # Spot price from equity_stockIndices
+    spot_price = 0
+    try:
+        url = 'https://www.nseindia.com/api/allIndices', timeout=8)
+        r = s.get(url, timeout=8)
+        if r.status_code == 403:
+            _reset_session()
+            s = _get_session()
+            r = s.get(url, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            records = data.get('data', [])
+            for rec in records:
+                sym = (rec.get('indexSymbol') or rec.get('index') or '').upper()
+                if sym == index_name.upper():
+                    spot_price = safe_float(rec.get('last') or rec.get('lastPrice') or rec.get('indexVal'))
+                    break
+            if not spot_price and records:
+                spot_price = safe_float(records[0].get('last') or records[0].get('lastPrice'))
+    except Exception as e:
+        print(f'  [nse_futures] spot fetch error: {e}')
+
+    # Futures data from option chain (underlying future)
+    fut_ltp = spot_price
+    fut_oi  = 0
+    fut_vol = 0
+    fut_chg = 0
+    fut_pct = 0
+    try:
+        url = f'https://www.nseindia.com/api/quote-derivative?symbol={fut_symbol}'
+        r = s.get(url, timeout=8)
+        if r.status_code == 403:
+            _reset_session()
+            s = _get_session()
+            r = s.get(url, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            # Find near-month futures (instrumentType=FUTIDX)
+            stocks = data.get('stocks', [])
+            futures = [x for x in stocks
+                      if x.get('metadata', {}).get('instrumentType') == 'FUTIDX']
+            if futures:
+                # Sort by expiry to get nearest
+                futures.sort(key=lambda x: x.get('metadata', {}).get('expiryDate', ''))
+                meta = futures[0].get('metadata', {})
+                fut_ltp = safe_float(meta.get('lastPrice', spot_price))
+                fut_oi  = safe_int(meta.get('openInterest', 0))
+                fut_vol = safe_int(meta.get('totalTradedVolume', 0) or
+                                   meta.get('numberOfContractsTraded', 0))
+                fut_chg = safe_float(meta.get('change', 0))
+                fut_pct = safe_float(meta.get('pChange', 0))
+    except Exception as e:
+        print(f'  [nse_futures] futures fetch error: {e}')
+        fut_ltp = spot_price
+
+    return spot_price, fut_ltp, fut_oi, fut_vol, fut_chg, fut_pct
+
+
 # ── Main poll ──────────────────────────────────────────────────────────────────
 
 def poll_futures_sentiment(symbol):
-    nse = get_nse()
     try:
-        # ── Get spot price + futures from option chain ──
-        # equities_option_chain works and contains underlyingValue (spot)
-        # and futures data in the filtered records
-        oc_data = nse.equities_option_chain(symbol)
-        records = oc_data.get('records', {})
-        spot_price = safe_float(records.get('underlyingValue', 0))
-
-        # ── Futures quote — try live_quote first, fall back to allIndices ──
-        fut_ltp = spot_price
-        fut_oi  = 0
-        fut_vol = 0
-        fut_chg = 0
-        fut_pct = 0
-
-        try:
-            # Use allIndices to get index data including futures
-            from screeners.nse_market import get_nse_session
-            s = get_nse_session()
-            r = s.get('https://www.nseindia.com/api/allIndices', timeout=8)
-            if r.status_code == 200:
-                all_data = r.json()
-                index_name = 'NIFTY 50' if symbol == 'NIFTY' else 'NIFTY BANK'
-                for item in all_data.get('data', []):
-                    if item.get('indexSymbol') == index_name or item.get('index') == index_name:
-                        spot_price = safe_float(item.get('last', spot_price))
-                        break
-        except Exception as e:
-            print(f"  [nse_futures] allIndices fallback {symbol}: {e}")
-
-        # Try to get futures LTP from option chain filtered data
-        try:
-            filtered = oc_data.get('filtered', {})
-            fut_records = filtered.get('FUT', []) or filtered.get('futures', [])
-            if fut_records:
-                fut = fut_records[0]
-                fut_ltp = safe_float(fut.get('lastPrice', spot_price))
-                fut_oi  = safe_int(fut.get('openInterest', 0))
-                fut_vol = safe_int(fut.get('totalTradedVolume', 0))
-                fut_chg = safe_float(fut.get('change', 0))
-                fut_pct = safe_float(fut.get('pChange', 0))
-            else:
-                # No futures in option chain — use spot as proxy
-                fut_ltp = spot_price
-        except Exception as e:
-            print(f"  [nse_futures] futures parse {symbol}: {e}")
-            fut_ltp = spot_price
+        spot_price, fut_ltp, fut_oi, fut_vol, fut_chg, fut_pct = _fetch_futures_data(symbol)
 
         if not spot_price:
             return None
@@ -247,6 +289,6 @@ def poll_futures_sentiment(symbol):
         }
 
     except Exception as e:
-        print(f"  [nse_futures] poll error {symbol}: {e}")
-        global _nse
-        _nse = None
+        print(f'  [nse_futures] poll error {symbol}: {e}')
+        _reset_session()
+        return None

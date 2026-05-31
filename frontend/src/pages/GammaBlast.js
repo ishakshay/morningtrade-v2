@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-var API = 'http://localhost:3001';
+var API = 'https://api.morningtrade.in';
 
 // ─── Score ring ───────────────────────────────────────────────────────────────
 

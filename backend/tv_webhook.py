@@ -57,18 +57,52 @@ def _prune_old(now_ms):
 
 
 def _validate_payload(data):
-    """Sanity-check the parsed JSON before storing. Returns (ok, error_str)."""
+    """Sanity-check the parsed JSON before storing. Returns (ok, error_str).
+    
+    Supports two formats:
+    1. Old format: single strike with event_type, strike, side, sig, z, delta_pct, ltp
+    2. New format: strikes array with [{strike, side, sig, z, delta_pct, ltp, vol}, ...]
+    """
     if not isinstance(data, dict):
         return False, "payload must be an object"
-    required = {"secret", "ts", "event_type", "strike", "side", "sig",
-                "z", "delta_pct", "ltp", "spot", "atm", "bias_pct"}
-    missing = required - set(data.keys())
+    
+    # Core fields always required
+    required_core = {"secret", "ts", "spot", "atm", "bias_pct"}
+    missing = required_core - set(data.keys())
     if missing:
         return False, f"missing required keys: {sorted(missing)}"
+    
+    # Check if this is new multi-strike format (has "strikes" array)
+    if "strikes" in data:
+        # New format: strikes array is present
+        strikes = data.get("strikes")
+        if not isinstance(strikes, list):
+            return False, "strikes must be an array"
+        
+        # Validate each strike object
+        for idx, s in enumerate(strikes):
+            if not isinstance(s, dict):
+                return False, f"strikes[{idx}] must be an object"
+            strike_required = {"strike", "side", "sig", "z"}
+            strike_missing = strike_required - set(s.keys())
+            if strike_missing:
+                return False, f"strikes[{idx}] missing: {sorted(strike_missing)}"
+            if s.get("side") not in ("CE", "PE"):
+                return False, f"strikes[{idx}] side must be 'CE' or 'PE', got {s.get('side')!r}"
+        
+        return True, None
+    
+    # Old format: single strike fields (backward compatibility)
+    required_old = {"event_type", "strike", "side", "sig", "z", "delta_pct", "ltp"}
+    missing = required_old - set(data.keys())
+    if missing:
+        return False, f"missing required keys: {sorted(missing)}"
+    
     if data.get("event_type") not in ("strike", "bias"):
         return False, f"event_type must be 'strike' or 'bias', got {data.get('event_type')!r}"
     if data.get("side") not in ("CE", "PE", ""):
         return False, f"side must be 'CE' or 'PE', got {data.get('side')!r}"
+    
     return True, None
 
 
@@ -118,10 +152,11 @@ def _handle_webhook():
         _events.append(event)
 
     log.info(
-        "TV event #%d %s %s%s sig=%s z=%.2f bias=%.1f",
-        event["id"], data.get("event_type"), data.get("strike"),
-        data.get("side"), data.get("sig"), float(data.get("z", 0)),
+        "TV event #%d: %s strikes, bias=%.1f%% %s",
+        event["id"],
+        len(data.get("strikes", [])) if "strikes" in data else f"1 ({data.get('strike')} {data.get('side')} {data.get('sig')})",
         float(data.get("bias_pct", 0)),
+        data.get("bias_verdict", ""),
     )
     return jsonify({"ok": True, "id": event["id"]}), 200
 
