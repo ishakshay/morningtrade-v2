@@ -297,6 +297,7 @@ _news_items_cache = {'data': [], 'ts': 0}
 NEWS_CACHE_TTL    = 300  # 5 minutes
 
 def refresh_news():
+    time.sleep(60)
     while True:
         try:
             print("\n--- Refreshing news ---")
@@ -311,7 +312,7 @@ def refresh_news():
         time.sleep(300)
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"])
+CORS(app, origins=["https://morningtrade.in", "https://www.morningtrade.in", "http://localhost:3000"])
 init_grid_routes(app)
 register_tv_webhook(app)
 
@@ -361,6 +362,7 @@ def safe_json(data):
 
 def refresh_futures():
     symbols = ['NIFTY', 'BANKNIFTY']
+    time.sleep(30)
     while True:
         print("\n--- Refreshing futures sentiment ---")
         for symbol in symbols:
@@ -375,6 +377,7 @@ def refresh_futures():
 
 def refresh_futures_dashboard():
     symbols = ['NIFTY', 'BANKNIFTY']
+    time.sleep(45)
     while True:
         for symbol in symbols:
             try:
@@ -385,6 +388,7 @@ def refresh_futures_dashboard():
         time.sleep(180)
 
 def refresh_market_overview():
+    time.sleep(20)
     while True:
         print("\n--- Refreshing market overview ---")
         try:
@@ -497,6 +501,7 @@ def _snapshot_strike_iv(symbol, full_chain_data):
 
 def refresh_options():
     symbols = ['NIFTY', 'BANKNIFTY']
+    time.sleep(10)
     while True:
         print("\n--- Refreshing options ---")
         for symbol in symbols:
@@ -528,6 +533,7 @@ def refresh_options():
         time.sleep(180)
 
 def refresh_indices():
+    time.sleep(15)
     while True:
         print("\n--- Refreshing indices ---")
         try:
@@ -570,6 +576,7 @@ def refresh_stocks():
         time.sleep(180)
 
 def refresh_loop():
+    time.sleep(90)
     while True:
         for country in COUNTRIES:
             print(f"\n--- Running screeners [{country}] ---")
@@ -624,11 +631,7 @@ def get_sessions():
 @app.route('/api/market-overview')
 def get_market_overview_route():
     if not _market_cache:
-        try:
-            result = get_market_overview()
-            _market_cache.update(result)
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+        return jsonify({'_loading': True, 'message': 'Data loading, retry in 30s'}), 202
     return jsonify(sanitize(_market_cache))
 
 @app.route('/api/options')
@@ -638,12 +641,7 @@ def get_options():
         return jsonify({'error': 'Invalid symbol'}), 400
     data = _options_cache.get(symbol)
     if not data:
-        try:
-            data = fetch_options(symbol)
-            if data:
-                _options_cache[symbol] = data
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+        return jsonify({'_loading': True, 'message': 'Data loading, retry in 30s'}), 202
     return jsonify(sanitize(data or {}))
 
 @app.route('/api/option-chain')
@@ -807,22 +805,18 @@ def websocket(ws):
 if __name__ == '__main__':
     t1 = threading.Thread(target=refresh_stocks,          daemon=True)
     t1.start()
-    t2 = threading.Thread(target=refresh_loop,            daemon=True)
-    t2.start()
-    t3 = threading.Thread(target=refresh_indices,         daemon=True)
-    t3.start()
-    t4 = threading.Thread(target=refresh_options,         daemon=True)
-    t4.start()
-    t5 = threading.Thread(target=refresh_market_overview, daemon=True)
-    t5.start()
-    t_futures = threading.Thread(target=refresh_futures,  daemon=True)
-    t_futures.start()
-    t_news = threading.Thread(target=refresh_news,        daemon=True)
-    t_news.start()
-    t_fd = threading.Thread(target=refresh_futures_dashboard, daemon=True)
-    t_fd.start()
-    t_eod = threading.Thread(target=eod_scheduler, daemon=True)
-    t_eod.start()
-    t_candles = threading.Thread(target=refresh_candles, daemon=True)
-    t_candles.start()
     app.run(port=3001, debug=False)
+
+# Start background threads at module level so Gunicorn picks them up
+import os
+if not os.environ.get('MORNINGTRADE_THREADS_STARTED'):
+    os.environ['MORNINGTRADE_THREADS_STARTED'] = '1'
+    threading.Thread(target=refresh_loop,             daemon=True).start()
+    threading.Thread(target=refresh_indices,          daemon=True).start()
+    threading.Thread(target=refresh_options,          daemon=True).start()
+    threading.Thread(target=refresh_market_overview,  daemon=True).start()
+    threading.Thread(target=refresh_futures,          daemon=True).start()
+    threading.Thread(target=refresh_news,             daemon=True).start()
+    threading.Thread(target=refresh_futures_dashboard,daemon=True).start()
+    threading.Thread(target=eod_scheduler,            daemon=True).start()
+    threading.Thread(target=refresh_candles,          daemon=True).start()

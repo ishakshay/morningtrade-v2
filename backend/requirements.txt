@@ -1,0 +1,11 @@
+flask
+flask-cors
+flask-sock
+python-dotenv
+feedparser
+requests
+pandas
+yfinance
+anthropic
+jugaad-data
+gunicorn

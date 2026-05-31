@@ -334,16 +334,24 @@ def fetch_index_data(index_name, key):
         return None
 
 def get_market_overview():
+    from screeners.nse_market_jugaad import fetch_index_data_jugaad, fetch_vix_jugaad, fetch_breadth_jugaad
     result = {}
 
     for index_name, key in [('NIFTY 50', 'NIFTY'), ('NIFTY BANK', 'BANKNIFTY')]:
         try:
             data = fetch_index_data(index_name, key)
+            if not data:
+                data = fetch_index_data_jugaad(index_name)
             if data:
                 result[key] = data
                 print(f"  [nse_market] {key}: {data['last']} ({'+' if data['is_up'] else ''}{data['pct_change']}%)")
         except Exception as e:
             print(f"  [nse_market] {key} error: {e}")
+            try:
+                data = fetch_index_data_jugaad(index_name)
+                if data:
+                    result[key] = data
+            except: pass
 
     try:
         vix = fetch_vix()
