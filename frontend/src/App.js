@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from './context/AuthContext';
 import Stocks from './pages/Stocks';
 import Screener from './pages/Screener';
@@ -332,6 +332,33 @@ function KeepAliveRoutes() {
 
 function AppLayout() {
   var [collapsed, setCollapsed] = useState(false);
+
+  useEffect(function() {
+    var API = 'https://api.morningtrade.in';
+    fetch(API + '/api/snapshot')
+      .then(function(r) { return r.json(); })
+      .then(function(snap) {
+        try {
+          var ts = Date.now();
+          if (snap.market) {
+            sessionStorage.setItem('fc_' + API + '/api/market-overview', JSON.stringify({data: snap.market, ts: ts}));
+          }
+          if (snap.indices) {
+            sessionStorage.setItem('fc_' + API + '/api/indices', JSON.stringify({data: snap.indices, ts: ts}));
+          }
+          if (snap.options && snap.options.NIFTY) {
+            sessionStorage.setItem('fc_' + API + '/api/options?symbol=NIFTY', JSON.stringify({data: snap.options.NIFTY, ts: ts}));
+          }
+          if (snap.options && snap.options.BANKNIFTY) {
+            sessionStorage.setItem('fc_' + API + '/api/options?symbol=BANKNIFTY', JSON.stringify({data: snap.options.BANKNIFTY, ts: ts}));
+          }
+          if (snap.news) {
+            sessionStorage.setItem('fc_' + API + '/api/news', JSON.stringify({data: snap.news, ts: ts}));
+          }
+        } catch(e) {}
+      })
+      .catch(function() {});
+  }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
