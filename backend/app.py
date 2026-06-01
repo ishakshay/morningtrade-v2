@@ -830,6 +830,12 @@ if __name__ == '__main__':
     t1.start()
     app.run(port=3001, debug=False)
 
+@app.after_request
+def add_cache_headers(response):
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'public, max-age=30'
+    return response
+
 # Start background threads at module level so Gunicorn picks them up
 import os
 if not os.environ.get('MORNINGTRADE_THREADS_STARTED'):
