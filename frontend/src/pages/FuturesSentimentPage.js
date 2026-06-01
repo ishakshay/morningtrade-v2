@@ -540,11 +540,7 @@ export default function FuturesSentimentPage() {
   var [lastUpdate, setLastUpdate] = useState(null);
   var intervalRef = useRef(null);
 
-  var hasOptions = user && (
-    user.plan === 'options' ||
-    user.plan === 'global'  ||
-    user.plan === 'admin'
-  );
+  var hasOptions = true; // Everyone can view
 
   function fetchData(sym) {
     setLoading(true);

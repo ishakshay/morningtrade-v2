@@ -6,11 +6,19 @@ export default function AuthSuccess() {
   var navigate = useNavigate();
 
   useEffect(function() {
+    // Handle hash-based OAuth callback
     supabase.auth.getSession().then(function({ data: { session } }) {
       if (session) {
-        navigate('/');
+        navigate('/', { replace: true });
       } else {
-        navigate('/login');
+        // Try to get session from URL hash
+        supabase.auth.onAuthStateChange(function(event, session) {
+          if (session) {
+            navigate('/', { replace: true });
+          } else {
+            navigate('/login', { replace: true });
+          }
+        });
       }
     });
   }, [navigate]);

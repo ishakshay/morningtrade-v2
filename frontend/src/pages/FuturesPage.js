@@ -925,11 +925,7 @@ export default function FuturesPage() {
   var prevSnapshotRef = useRef(null);     // used to diff snapshots → events
   var eventIdRef      = useRef(0);
 
-  var hasOptions = user && (
-    user.plan === 'options' ||
-    user.plan === 'global'  ||
-    user.plan === 'admin'
-  );
+  var hasOptions = true; // Everyone can view
 
   function fetchSentiment(sym) {
     if (paused) return;

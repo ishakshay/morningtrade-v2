@@ -398,11 +398,7 @@ export default function App() {
       <Routes>
         <Route path="/login"        element={<Login />}       />
         <Route path="/auth/success" element={<AuthSuccess />} />
-        <Route path="/*" element={
-          <ProtectedRoute>
-            <AppLayout />
-          </ProtectedRoute>
-        } />
+        <Route path="/*" element={<AppLayout />} />
       </Routes>
     </BrowserRouter>
   );

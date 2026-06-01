@@ -5888,11 +5888,7 @@ export default function Options() {
     }
   }, [volumeSpikes, symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  var hasOptions = user && (
-    user.plan === 'options' ||
-    user.plan === 'global'  ||
-    user.plan === 'admin'
-  );
+  var hasOptions = true; // Everyone can view — auth is for tracking only
 
   function fetchOverview() {
     fetch('https://api.morningtrade.in/api/market-overview')
@@ -6013,16 +6009,13 @@ export default function Options() {
     clearInterval(intervalRef.current);
     clearInterval(dashIntervalRef.current);
     intervalRef.current = setInterval(function() {
-      if (!isMarketOpen()) {
-        clearInterval(intervalRef.current);
-        clearInterval(dashIntervalRef.current);
-        return;
-      }
       fetchSym(symbol, setData);
       fetchSym('BANKNIFTY', setBnData);
-      fetchDashboard(symbol);
-      fetchVolumeAnalysis(symbol);
-      fetchStrikeIVHistory(symbol);
+      if (isMarketOpen()) {
+        fetchDashboard(symbol);
+        fetchVolumeAnalysis(symbol);
+        fetchStrikeIVHistory(symbol);
+      }
     }, 180000);
     return function() {
       clearInterval(intervalRef.current);

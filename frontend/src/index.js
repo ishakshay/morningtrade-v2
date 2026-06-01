@@ -8,7 +8,22 @@ import { DataProvider } from './context/DataContext';
 
 (function() {
   var _fetch = window.fetch;
-  var TTL = 300000;
+  var TTL = 170000; // 2m50s — slightly under 3min refresh cycle
+
+  // These endpoints always bypass cache — they change every 3 mins
+  var NO_CACHE = [
+    '/api/options',
+    '/api/pcr-intraday',
+    '/api/tv/events',
+    '/api/tv/health',
+    '/api/futures-sentiment',
+    '/api/futures-dashboard',
+    '/api/volume/analysis',
+  ];
+
+  function shouldSkipCache(url) {
+    return NO_CACHE.some(function(p) { return url.includes(p); });
+  }
 
   function getCached(url) {
     try {
@@ -31,6 +46,7 @@ import { DataProvider } from './context/DataContext';
   window.fetch = function(url, opts) {
     if (opts && opts.method && opts.method !== 'GET') return _fetch(url, opts);
     if (typeof url !== 'string' || !url.includes('api.morningtrade.in')) return _fetch(url, opts);
+    if (shouldSkipCache(url)) return _fetch(url, opts);
     var cached = getCached(url);
     if (cached) {
       return Promise.resolve(new Response(JSON.stringify(cached), {
@@ -53,20 +69,12 @@ import { DataProvider } from './context/DataContext';
   };
 })();
 
+// Unregister any existing service workers
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').then(function(reg) {
-    if (reg.active) reg.active.postMessage('preload');
-    reg.addEventListener('updatefound', function() {
-      if (reg.installing) reg.installing.postMessage('preload');
-    });
-  }).catch(function(e) { console.log('[SW] error', e); });
+  navigator.serviceWorker.getRegistrations().then(function(regs) {
+    regs.forEach(function(reg) { reg.unregister(); });
+  });
 }
-
-setInterval(function() {
-  if (navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage('preload');
-  }
-}, 180000);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
