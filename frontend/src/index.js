@@ -8,7 +8,7 @@ import { DataProvider } from './context/DataContext';
 
 (function() {
   var _fetch = window.fetch;
-  var TTL = 180000;
+  var TTL = 300000;
 
   function getCached(url) {
     try {
@@ -52,6 +52,21 @@ import { DataProvider } from './context/DataContext';
     return promise;
   };
 })();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').then(function(reg) {
+    if (reg.active) reg.active.postMessage('preload');
+    reg.addEventListener('updatefound', function() {
+      if (reg.installing) reg.installing.postMessage('preload');
+    });
+  }).catch(function(e) { console.log('[SW] error', e); });
+}
+
+setInterval(function() {
+  if (navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage('preload');
+  }
+}, 180000);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
