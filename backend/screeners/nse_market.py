@@ -1,5 +1,6 @@
 from jugaad_data.nse import NSELive
-from datetime import datetime, date
+from datetime import datetime, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import yfinance as yf
 import requests
 import json
@@ -60,7 +61,7 @@ def fetch_vix():
             'low':        round(safe_float(meta.get('low', 0)), 2),
             'prev_close': round(safe_float(meta.get('previousClose', 0)), 2),
             'is_up':      safe_float(meta.get('change', 0)) >= 0,
-            'timestamp':  datetime.now().strftime('%H:%M'),
+            'timestamp':  datetime.now(IST).strftime('%H:%M'),
         }
     except Exception as e:
         print(f"  [nse_market] VIX error: {e}")
@@ -73,7 +74,7 @@ def save_vix_snapshot(vix_val):
         _vix_history = []
     _vix_history.append({
         'date':  today,
-        'time':  datetime.now().strftime('%H:%M'),
+        'time':  datetime.now(IST).strftime('%H:%M'),
         'value': vix_val,
     })
     if len(_vix_history) > 130:
@@ -102,7 +103,7 @@ def save_iv_snapshot(symbol, atm_ce_iv, atm_pe_iv, atm_ce_ltp=0, atm_pe_ltp=0, s
     pe_vix_ratio = round(atm_pe_iv / vix, 3) if vix > 0 and atm_pe_iv > 0 else None
     hist.append({
         'date':         today,
-        'time':         datetime.now().strftime('%H:%M'),
+        'time':         datetime.now(IST).strftime('%H:%M'),
         'ce_iv':        atm_ce_iv,
         'pe_iv':        atm_pe_iv,
         'avg_iv':       round((atm_ce_iv + atm_pe_iv) / 2, 2),
@@ -135,7 +136,7 @@ def save_pcr_intraday(symbol, pcr, ce_coi, pe_coi):
     signal = 'BUY' if pcr > 1.2 else 'SELL' if pcr < 0.8 else 'NEUTRAL'
     pcr_coi_val = round(pe_coi / ce_coi, 2) if ce_coi != 0 else (99.0 if pe_coi > 0 else 0)
     bucket['snapshots'].append({
-        'time':    datetime.now().strftime('%H:%M'),
+        'time':    datetime.now(IST).strftime('%H:%M'),
         'pcr':     round(pcr, 2),
         'pcr_coi': pcr_coi_val,
         'diff':    diff,
@@ -325,7 +326,7 @@ def fetch_index_data(index_name, key):
             'unchanged':  unchanged,
             'total':      total,
             'ad_ratio':   ad_ratio,
-            'timestamp':  meta.get('timeVal', datetime.now().strftime('%H:%M:%S')),
+            'timestamp':  meta.get('timeVal', datetime.now(IST).strftime('%H:%M:%S')),
         }
     except Exception as e:
         print(f"  [nse_market] fetch error {index_name}: {e}")

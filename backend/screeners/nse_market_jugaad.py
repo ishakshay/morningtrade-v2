@@ -1,5 +1,6 @@
 from jugaad_data.nse import NSELive
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import time
 
 _nse = NSELive()
@@ -63,7 +64,7 @@ def fetch_index_data_jugaad(index_name):
         'unchanged':  unchanged,
         'total':      total,
         'ad_ratio':   ad_ratio,
-        'timestamp':  datetime.now().strftime('%H:%M:%S'),
+        'timestamp':  datetime.now(IST).strftime('%H:%M:%S'),
     }
 
 def fetch_vix_jugaad():
