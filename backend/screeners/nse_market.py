@@ -1,5 +1,5 @@
 from jugaad_data.nse import NSELive
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 IST = timezone(timedelta(hours=5, minutes=30))
 import yfinance as yf
 import requests
