@@ -5901,6 +5901,11 @@ export default function Options() {
     fetch('https://api.morningtrade.in/api/options?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
+        // If backend is still loading, retry in 15 seconds
+        if (d && d._loading) {
+          setTimeout(function() { fetchSym(sym, setter); }, 15000);
+          return;
+        }
         if (d && d.spot_price) {
           setter(function(prev) {
             if (prev && sym === symbol) {
@@ -5976,7 +5981,7 @@ export default function Options() {
   useEffect(function() {
     if (!hasOptions) return;
     fetchOverview();
-    overviewRef.current = setInterval(fetchOverview, 180000);
+    overviewRef.current = setInterval(fetchOverview, 60000);
     return function() { clearInterval(overviewRef.current); };
   }, [hasOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -6016,7 +6021,7 @@ export default function Options() {
         fetchVolumeAnalysis(symbol);
         fetchStrikeIVHistory(symbol);
       }
-    }, 180000);
+    }, 60000);
     return function() {
       clearInterval(intervalRef.current);
       clearInterval(dashIntervalRef.current);
