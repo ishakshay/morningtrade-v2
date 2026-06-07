@@ -133,8 +133,13 @@ def get_intraday_history(symbol):
     return list(reversed(_intraday_history[symbol]['snapshots']))
 
 def fetch_futures_data(symbol):
+    import signal
+    def _timeout_handler(signum, frame):
+        raise TimeoutError('NSE fetch timed out')
     nse = get_nse()
     try:
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(8)  # 8 second timeout
         index_name = 'NIFTY 50' if symbol == 'NIFTY' else 'NIFTY BANK'
         spot_data  = nse.live_index(index_name)
         spot_meta  = spot_data.get('metadata', {})
@@ -172,6 +177,7 @@ def fetch_futures_data(symbol):
         except Exception as e:
             print(f"  [futures_dashboard] stock_quote_fno failed for {symbol}: {e}")
 
+        signal.alarm(0)  # cancel timeout
         if fut_vwap == 0:
             fut_vwap = update_vwap(symbol, fut_ltp,
                                    safe_int(spot_meta.get('totalTradedVolume', 0)))
