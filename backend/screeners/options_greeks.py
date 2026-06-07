@@ -23,7 +23,8 @@ REMOVED (were wrong):
   - ITM strikes — high volume but bad risk/reward for buyers
 """
 
-from datetime import datetime
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def get_top_strikes(option_chain_result, iv_history=None):
@@ -267,7 +268,7 @@ def get_top_strikes(option_chain_result, iv_history=None):
         'spot':      spot,
         'expiry':    option_chain_result.get('expiry', ''),
         'iv_rising': iv_rising,
-        'timestamp': datetime.now().strftime('%H:%M:%S'),
+        'timestamp': datetime.now(IST).strftime('%H:%M:%S'),
     }
 
 

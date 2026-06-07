@@ -1,11 +1,12 @@
 from screeners.base import get_symbols, fetch_daily, fetch_intraday, base_stock_info, MARKET_HOURS_UTC
-from datetime import datetime
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import session_store
 
 SCREENER_ID = 'intraday_booster'
 
 def is_market_open(country):
-    now = datetime.utcnow()
+    now = datetime.now(IST)
     if now.weekday() >= 5:
         return False
     hours = MARKET_HOURS_UTC.get(country, {'open': 8, 'close': 16})

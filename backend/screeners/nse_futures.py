@@ -1,5 +1,6 @@
 from jugaad_data.nse import NSELive
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import math
 
 _nse     = None
@@ -187,7 +188,7 @@ def poll_futures_sentiment(symbol):
 
         # ── Append to history ──
         snap = {
-            'time':         datetime.now().strftime('%H:%M:%S'),
+            'time':         datetime.now(IST).strftime('%H:%M:%S'),
             'signal':       signal,
             'signal_emoji': meta['emoji'],
             'signal_color': meta['color'],
@@ -218,7 +219,7 @@ def poll_futures_sentiment(symbol):
             'signal_emoji': meta['emoji'],
             'signal_color': meta['color'],
             'confidence':   confidence,
-            'timestamp':    datetime.now().strftime('%H:%M:%S'),
+            'timestamp':    datetime.now(IST).strftime('%H:%M:%S'),
             'trend':        trend,
             'trend_color':  trend_color,
             'alerts':       alerts,

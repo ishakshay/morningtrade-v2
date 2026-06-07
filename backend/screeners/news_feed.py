@@ -1,6 +1,7 @@
 import feedparser
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30)), timezone, timedelta
 import hashlib
 
 FEEDS = [

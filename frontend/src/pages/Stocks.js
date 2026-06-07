@@ -70,7 +70,7 @@ export default function Stocks() {
     setStocks([]);
 
     function loadStocks() {
-      fetch('http://localhost:3001/api/stocks?country=' + country)
+      fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/stocks?country=' + country)
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (Array.isArray(data)) {

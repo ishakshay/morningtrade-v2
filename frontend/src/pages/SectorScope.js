@@ -150,7 +150,7 @@ export default function SectorScope() {
 
   useEffect(function() {
     function connect() {
-      var ws = new WebSocket('ws://localhost:3001/ws');
+      var ws = new WebSocket((process.env.REACT_APP_API_URL || 'http://localhost:3001').replace('https://','wss://').replace('http://','ws://') + '/ws');
       wsRef.current = ws;
       ws.onopen = function() { setConnected(true); };
       ws.onmessage = function(e) {
@@ -173,7 +173,7 @@ export default function SectorScope() {
 
   useEffect(function() {
     if (!country) return;
-    fetch('http://localhost:3001/api/sector-scope?country=' + country)
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/sector-scope?country=' + country)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data && Object.keys(data).length > 0) {

@@ -18,13 +18,14 @@ export default function IndicesTicker() {
   var wsRef = useRef(null);
 
   useEffect(function() {
-    fetch('http://localhost:3001/api/indices')
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/indices')
       .then(function(r) { return r.json(); })
       .then(function(data) { if (Array.isArray(data)) setIndices(data); })
       .catch(function() {});
 
     function connect() {
-      var ws = new WebSocket('ws://localhost:3001/ws');
+      var wsUrl = (process.env.REACT_APP_API_URL || 'http://localhost:3001').replace('https://','wss://').replace('http://','ws://') + '/ws';
+      var ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.onmessage = function(e) {
         var msg = JSON.parse(e.data);

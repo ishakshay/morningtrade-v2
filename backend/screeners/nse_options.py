@@ -1,5 +1,6 @@
 from jugaad_data.nse import NSELive
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import math
 
 SCREENER_ID       = 'nse_options'
@@ -16,7 +17,7 @@ def get_nse():
     return _nse
 
 def is_market_open():
-    now  = datetime.utcnow()
+    now  = datetime.now(IST)
     if now.weekday() >= 5:
         return False
     hour = now.hour + now.minute / 60
@@ -40,7 +41,7 @@ def safe_int(val, default=0):
 def save_strike_pcr_snapshot(symbol, chain_rows):
     global _strike_pcr_hist
     today   = date.today().isoformat()
-    now_str = datetime.now().strftime('%H:%M')
+    now_str = datetime.now(IST).strftime('%H:%M')
     if symbol not in _strike_pcr_hist:
         _strike_pcr_hist[symbol] = {'date': today, 'snapshots': []}
     if _strike_pcr_hist[symbol]['date'] != today:
@@ -223,7 +224,7 @@ def save_pcr_snapshot(symbol, pcr_total, pcr_atm, pcr_5strike):
     if _pcr_history[symbol]['date'] != today:
         _pcr_history[symbol] = {'date': today, 'snapshots': []}
     _pcr_history[symbol]['snapshots'].append({
-        'time':        datetime.now().strftime('%H:%M'),
+        'time':        datetime.now(IST).strftime('%H:%M'),
         'pcr':         round(pcr_total,   2),
         'pcr_atm':     round(pcr_atm,     2),
         'pcr_5strike': round(pcr_5strike, 2),
@@ -502,7 +503,7 @@ def parse_option_chain(data, symbol):
         'total_pe_coi':      total_pe_coi,
         'chain':             sorted(full_chain_rows, key=lambda x: x['strike'], reverse=True),
         'total_strikes':     len(full_chain_rows),
-        'timestamp':         datetime.now().strftime('%H:%M:%S'),
+        'timestamp':         datetime.now(IST).strftime('%H:%M:%S'),
         'market_open':       is_market_open(),
         'iv_history':        [],
     }
@@ -550,7 +551,7 @@ def parse_option_chain(data, symbol):
         'total_ce_coi':      total_ce_coi,
         'total_pe_coi':      total_pe_coi,
         'chain':             sorted(chain_rows, key=lambda x: x['strike'], reverse=True),
-        'timestamp':         datetime.now().strftime('%H:%M:%S'),
+        'timestamp':         datetime.now(IST).strftime('%H:%M:%S'),
         'market_open':       is_market_open(),
         'full_chain_payload': full_chain_payload,
     }

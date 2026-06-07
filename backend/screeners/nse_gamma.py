@@ -1,4 +1,5 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import math
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ def _save_gamma_snapshot(symbol, result):
     if symbol not in _gamma_history or _gamma_history[symbol]['date'] != today:
         _gamma_history[symbol] = {'date': today, 'snapshots': []}
     _gamma_history[symbol]['snapshots'].append({
-        'time':   datetime.now().strftime('%H:%M'),
+        'time':   datetime.now(IST).strftime('%H:%M'),
         'score':  result['score'],
         'rating': result['rating'],
         'direction': result['direction'],
@@ -388,7 +389,7 @@ def compute_gamma_blast(options_data, futures_payload, prev_pcr_3strike=None):
 
     result = {
         'symbol':         options_data.get('symbol'),
-        'timestamp':      datetime.now().strftime('%H:%M:%S'),
+        'timestamp':      datetime.now(IST).strftime('%H:%M:%S'),
         'score':          score,
         'max_score':      13,
         'rating':         rating,

@@ -22,10 +22,10 @@ var OptionsChainGrid = function() {
     
     var validInterval = timeInterval || 3;
     
-    var promiseCE = fetch('http://localhost:3001/api/options-chain-grid?symbol=' + symbol + '&interval=' + validInterval + '&data_type=' + dataType + '&option_type=CE&strike_range=' + strikeRange)
+    var promiseCE = fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/options-chain-grid?symbol=' + symbol + '&interval=' + validInterval + '&data_type=' + dataType + '&option_type=CE&strike_range=' + strikeRange)
       .then(function(response) { return response.json(); });
     
-    var promisePE = fetch('http://localhost:3001/api/options-chain-grid?symbol=' + symbol + '&interval=' + validInterval + '&data_type=' + dataType + '&option_type=PE&strike_range=' + strikeRange)
+    var promisePE = fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/options-chain-grid?symbol=' + symbol + '&interval=' + validInterval + '&data_type=' + dataType + '&option_type=PE&strike_range=' + strikeRange)
       .then(function(response) { return response.json(); });
     
     Promise.all([promiseCE, promisePE])

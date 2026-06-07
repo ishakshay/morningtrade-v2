@@ -3945,7 +3945,7 @@ function PreTradeModal(props) {
   var [news, setNews]     = React.useState([]);
 
   React.useEffect(function() {
-    fetch('http://localhost:3001/api/news')
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/news')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!Array.isArray(d)) return;
@@ -5725,7 +5725,7 @@ export default function Options() {
   // refresh_options(). We just fetch + cache to localStorage so reload doesn't
   // wipe the day's data and switching strikes shows immediate history.
   function fetchStrikeIVHistory(sym) {
-    fetch('http://localhost:3001/api/strike-iv-history?symbol=' + sym)
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/strike-iv-history?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && d.history) {
@@ -5771,14 +5771,14 @@ export default function Options() {
     var aborted = false;
 
     function checkHealth() {
-      fetch('http://localhost:3001/api/tv/health')
+      fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/tv/health')
         .then(function(r) { return r.json(); })
         .then(function(d) { if (!aborted) setTvConfigured(!!(d && d.configured)); })
         .catch(function() { if (!aborted) setTvConfigured(false); });
     }
 
     function pollEvents() {
-      var url = 'http://localhost:3001/api/tv/events?since=' + tvLastSeenIdRef.current + '&limit=50';
+      var url = (process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/tv/events?since=' + tvLastSeenIdRef.current + '&limit=50';
       fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -5886,21 +5886,17 @@ export default function Options() {
     }
   }, [volumeSpikes, symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  var hasOptions = user && (
-    user.plan === 'options' ||
-    user.plan === 'global'  ||
-    user.plan === 'admin'
-  );
+  var hasOptions = true;
 
   function fetchOverview() {
-    fetch('http://localhost:3001/api/market-overview')
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/market-overview')
       .then(function(r) { return r.json(); })
       .then(function(d) { if (d && !d.error) setOverview(d); })
       .catch(function() {});
   }
 
   function fetchSym(sym, setter) {
-    fetch('http://localhost:3001/api/options?symbol=' + sym)
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/options?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && d.spot_price) {
@@ -5954,14 +5950,14 @@ export default function Options() {
   }
 
   function fetchDashboard(sym) {
-    fetch('http://localhost:3001/api/futures-dashboard?symbol=' + sym)
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/futures-dashboard?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) { if (d && !d.error) setDashData(d); })
       .catch(function(e) { console.error('[Options] dashboard fetch:', e); });
   }
 
   function fetchVolumeAnalysis(sym) {
-    fetch('http://localhost:3001/api/volume/analysis?symbol=' + sym)
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/volume/analysis?symbol=' + sym)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && !d.error) {
@@ -6011,16 +6007,13 @@ export default function Options() {
     clearInterval(intervalRef.current);
     clearInterval(dashIntervalRef.current);
     intervalRef.current = setInterval(function() {
-      if (!isMarketOpen()) {
-        clearInterval(intervalRef.current);
-        clearInterval(dashIntervalRef.current);
-        return;
-      }
       fetchSym(symbol, setData);
       fetchSym('BANKNIFTY', setBnData);
       fetchDashboard(symbol);
-      fetchVolumeAnalysis(symbol);
-      fetchStrikeIVHistory(symbol);
+      if (isMarketOpen()) {
+        fetchVolumeAnalysis(symbol);
+        fetchStrikeIVHistory(symbol);
+      }
     }, 180000);
     return function() {
       clearInterval(intervalRef.current);

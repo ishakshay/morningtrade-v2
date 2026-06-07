@@ -160,7 +160,7 @@ export default function MarketSession() {
   var [lastUpdate, setLastUpdate] = useState(null);
 
   function fetchSessions() {
-    fetch('http://localhost:3001/api/sessions')
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/sessions')
       .then(function(r) { return r.json(); })
       .then(function(data) {
         setSessions(data);

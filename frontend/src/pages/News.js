@@ -86,7 +86,7 @@ export default function News() {
 
   function fetchNews() {
     setLoading(true);
-    fetch('http://localhost:3001/api/news?region=' + region)
+    fetch((process.env.REACT_APP_API_URL || 'http://localhost:3001') + '/api/news?region=' + region)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var items = Array.isArray(d) ? d : [];

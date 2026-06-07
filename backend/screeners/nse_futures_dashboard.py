@@ -1,5 +1,6 @@
 from jugaad_data.nse import NSELive
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30))
 import math
 
 _nse              = None
@@ -46,7 +47,7 @@ def update_vwap(symbol, price, total_vol_today):
 def save_intraday_snapshot(symbol, call_vol, put_vol, pcr, fut_ltp, fut_vwap, pcr_coi=0, fut_vol=0, strikes_data=None, atm_strike=0):
     global _intraday_history, _last_fut_vol
     today        = date.today().isoformat()
-    _now         = datetime.now()
+    _now         = datetime.now(IST)
     bucketed_min = (_now.minute // 3) * 3
     now_str      = _now.strftime('%H') + str(bucketed_min).zfill(2)
 
@@ -293,7 +294,8 @@ def build_strike_rows(options_data, futures_info):
 def fetch_dashboard(symbol, options_data):
     futures_info = fetch_futures_data(symbol)
     strike_rows  = build_strike_rows(options_data, futures_info)
-    if options_data and futures_info:
+    if options_data:
+        futures_info = futures_info or {}
         ce_coi   = options_data.get('total_ce_coi', 0) or 0
         pe_coi   = options_data.get('total_pe_coi', 0) or 0
         pcr_coi  = round(pe_coi / ce_coi, 2) if ce_coi != 0 else 0
@@ -325,7 +327,7 @@ def fetch_dashboard(symbol, options_data):
         )
     return {
         'symbol':           symbol,
-        'timestamp':        datetime.now().strftime('%H:%M:%S'),
+        'timestamp':        datetime.now(IST).strftime('%H:%M:%S'),
         'spot_price':       options_data.get('spot_price', 0) if options_data else 0,
         'atm_strike':       options_data.get('atm_strike', 0) if options_data else 0,
         'expiry':           options_data.get('expiry', '')     if options_data else '',

@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-var API = 'http://localhost:3001';
+var API = (process.env.REACT_APP_API_URL || 'http://localhost:3001');
 
 // ─── Smoothing helpers ────────────────────────────────────────────────────────
 

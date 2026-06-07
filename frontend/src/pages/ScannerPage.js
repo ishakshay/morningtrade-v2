@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-var API_BASE = 'http://localhost:3001';
+var API_BASE = (process.env.REACT_APP_API_URL || 'http://localhost:3001');
 
 var NSE_FO_STOCKS = [
   'RELIANCE', 'INFY', 'TCS', 'HDFCBANK', 'ICICIBANK',

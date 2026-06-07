@@ -1,4 +1,5 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
+IST = timezone(timedelta(hours=5, minutes=30)), timezone, timedelta
 
 SCREENER_ID = 'market_session'
 
@@ -57,7 +58,7 @@ def get_session_status(country):
     if not session:
         return None
 
-    now     = datetime.utcnow()
+    now     = datetime.now(IST)
     is_wknd = now.weekday() >= 5
     hour    = now.hour + now.minute / 60
 
