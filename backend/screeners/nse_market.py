@@ -1,4 +1,7 @@
 from jugaad_data.nse import NSELive
+try:
+    from screeners.nse_market_jugaad import fetch_nifty_jugaad, fetch_banknifty_jugaad, fetch_vix_jugaad, fetch_breadth_jugaad
+except: pass
 from datetime import datetime, date, timezone, timedelta
 IST = timezone(timedelta(hours=5, minutes=30))
 import yfinance as yf
@@ -340,11 +343,21 @@ def get_market_overview():
     for index_name, key in [('NIFTY 50', 'NIFTY'), ('NIFTY BANK', 'BANKNIFTY')]:
         try:
             data = fetch_index_data(index_name, key)
+            if not data:
+                fetcher = fetch_nifty_jugaad if key == 'NIFTY' else fetch_banknifty_jugaad
+                data = fetcher()
             if data:
                 result[key] = data
-                print(f"  [nse_market] {key}: {data['last']} ({'+' if data['is_up'] else ''}{data['pct_change']}%)")
+                print(f"  [nse_market] {key}: {data['last']} ({data['pct_change']}%)")
         except Exception as e:
-            print(f"  [nse_market] {key} error: {e}")
+            print(f"  [nse_market] fetch error {index_name}: {e}")
+            try:
+                fetcher = fetch_nifty_jugaad if key == 'NIFTY' else fetch_banknifty_jugaad
+                data = fetcher()
+                if data:
+                    result[key] = data
+                    print(f"  [nse_market] {key} (jugaad): {data['last']}")
+            except: pass
 
     try:
         vix = fetch_vix()
