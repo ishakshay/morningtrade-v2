@@ -295,10 +295,6 @@ def fetch_index_constituents(index_name, top_n=10):
         return []
 
 def fetch_index_data(index_name, key):
-    import signal
-    def _timeout(signum, frame): raise TimeoutError('NSE timeout')
-    signal.signal(signal.SIGALRM, _timeout)
-    signal.alarm(8)
     nse = get_nse()
     try:
         data = nse.live_index(index_name)
